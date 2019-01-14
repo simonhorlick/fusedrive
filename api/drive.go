@@ -123,7 +123,10 @@ func (d *DriveApi) List() []DriveApiFile {
 	} else {
 		for _, i := range r.Files {
 			fmt.Printf("%s (%s)\n", i.Name, i.Id)
-			files = append(files, DriveApiFile{i.Id, i.Name})
+			files = append(files, DriveApiFile{
+				Id: i.Id,
+				Name: i.Name,
+			})
 		}
 	}
 
@@ -165,7 +168,7 @@ func (d *DriveApi) ReadAt(id string, p []byte, off int64) (n int, err error) {
 	return int(written), err
 }
 
-const fieldsToReturn = "id,name,size,md5Checksum,trashed,modifiedTime,createdTime,parents"
+const fieldsToReturn = "id,name,size,md5Checksum,trashed,modifiedTime,createdTime,parents,mimeType"
 
 // GetAttr returns the metadata for the file.
 func (d *DriveApi) GetAttr(id string) (*drive.File, error) {
