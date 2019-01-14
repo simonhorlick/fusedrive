@@ -131,3 +131,25 @@ func (fs *DriveFileSystem) Mkdir(name string, mode uint32, context *fuse.Context
 
 	return fuse.OK
 }
+
+func (fs *DriveFileSystem) Create(name string, flags uint32, mode uint32,
+	context *fuse.Context) (file nodefs.File, code fuse.Status) {
+	log.Printf("Creating file \"%s\"", name)
+
+	newFile := &drive.File{
+		Name: name,
+	}
+
+	f, err := fs.driveApi.Service.Files.Create(newFile).Do()
+	if err != nil {
+		log.Printf("failed to create file: %v", err)
+		return nil, fuse.EIO
+	}
+
+	log.Printf("created file: %s", spew.Sdump(f))
+
+	return NewDriveFile(fs.driveApi, DriveApiFile{
+		Name: f.Name,
+		Id: f.Id,
+	}), fuse.OK
+}

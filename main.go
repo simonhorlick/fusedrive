@@ -10,15 +10,13 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/hanwen/go-fuse/fuse"
+	"github.com/hanwen/go-fuse/fuse/nodefs"
+	"github.com/hanwen/go-fuse/fuse/pathfs"
 	"github.com/simonhorlick/fusedrive/api"
 	"log"
 	"os"
 	"path"
-	"time"
-
-	"github.com/hanwen/go-fuse/fuse"
-	"github.com/hanwen/go-fuse/fuse/nodefs"
-	"github.com/hanwen/go-fuse/fuse/pathfs"
 )
 
 func main() {

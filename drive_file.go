@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/hanwen/go-fuse/fuse/nodefs"
 	"github.com/simonhorlick/fusedrive/api"
+	"google.golang.org/api/drive/v3"
 	"log"
 	"sync"
 )
@@ -14,7 +16,7 @@ var _ nodefs.File = &DriveFile{} // Verify that interface is implemented.
 func NewDriveFile(driveApi *api.DriveApi, file api.DriveApiFile) nodefs.File {
 	return &DriveFile{
 		driveApi: driveApi,
-		File:     nodefs.NewDefaultFile(),
+		File:     NewUnimplementedFile(),
 		DriveApiFile: file,
 	}
 }
@@ -82,5 +84,49 @@ func (f *DriveFile) GetAttr(out *fuse.Attr) fuse.Status {
 
 	out.Mode = fuse.S_IFREG | 0644
 	out.Size = uint64(file.Size)
+	return fuse.OK
+}
+
+func (f* DriveFile) Write(data []byte, off int64) (written uint32,
+	code fuse.Status) {
+	log.Printf("Write %s offset %d", f.Name, off)
+
+	// TODO(simon): Does this upload the whole file?
+	request := f.driveApi.Service.Files.Update(f.Id, &drive.File{})
+	request.Media(bytes.NewReader(data))
+	file, err := request.Do()
+	log.Printf("Updated file, err: %#v, %v", file, err)
+
+	if err != nil {
+		return 0, fuse.EIO
+	}
+
+	return uint32(len(data)), fuse.OK
+}
+
+// The truncate() and ftruncate() functions cause the regular file named
+// by path or referenced by fd to be truncated to a size of precisely
+// length bytes.
+//
+// If the file previously was larger than this size, the extra data is
+// lost.  If the file previously was shorter, it is extended, and the
+// extended part reads as null bytes ('\0').
+func (f *DriveFile) Truncate(size uint64) fuse.Status {
+	// TODO(simon): Do we need to implement this?
+	if size != 0 {
+		log.Printf("error: truncating file to non-zero size is not implemented")
+		return fuse.ENOSYS
+	}
+
+	request := f.driveApi.Service.Files.Update(f.Id, &drive.File{})
+	request.Media(bytes.NewReader([]byte{}))
+	file, err := request.Do()
+	log.Printf("Updated file, err: %#v, %v", file, err)
+
+	if err != nil {
+		log.Printf("error truncating file: %v", err)
+		return fuse.EIO
+	}
+
 	return fuse.OK
 }
