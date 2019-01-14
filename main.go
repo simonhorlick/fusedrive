@@ -35,11 +35,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	opts := &nodefs.Options{
-		NegativeTimeout: time.Second,
-		AttrTimeout:     time.Second,
-		EntryTimeout:    time.Second,
-	}
+	opts := nodefs.NewOptions()
 
 	driveApi := api.NewDriveApi()
 
