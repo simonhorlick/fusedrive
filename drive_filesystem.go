@@ -221,3 +221,20 @@ func (fs *DriveFileSystem) Unlink(name string, context *fuse.Context) (
 
 	return fuse.OK
 }
+
+func (fs *DriveFileSystem) Rmdir(name string, context *fuse.Context) (
+	code fuse.Status) {
+	id, err := fs.LookupByPath(name)
+	if err != nil {
+		log.Printf("error: %v", err)
+		return fuse.ENOENT
+	}
+
+	err = fs.driveApi.Service.Files.Delete(id).Do()
+	if err != nil {
+		log.Printf("failed to delete directory: %v", err)
+		return fuse.EIO
+	}
+
+	return fuse.OK
+}

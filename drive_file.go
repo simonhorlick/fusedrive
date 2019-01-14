@@ -13,11 +13,14 @@ import (
 
 var _ nodefs.File = &DriveFile{} // Verify that interface is implemented.
 
+const binaryMimeType = "application/octet-stream"
+
 func NewDriveFile(driveApi *api.DriveApi, file api.DriveApiFile) nodefs.File {
 	return &DriveFile{
 		driveApi: driveApi,
 		File:     NewUnimplementedFile(),
 		DriveApiFile: file,
+		dataBuffer: make([]byte, 0),
 	}
 }
 
@@ -25,6 +28,9 @@ type DriveFile struct {
 	driveApi *api.DriveApi
 
 	api.DriveApiFile
+
+	// dataBuffer buffers writes until Flush is called.
+	dataBuffer []byte
 
 	// os.File is not threadsafe. Although fd themselves are
 	// constant during the lifetime of an open file, the OS may
@@ -48,8 +54,7 @@ func (f *DriveFile) String() string {
 }
 
 func (f *DriveFile) Read(buf []byte, off int64) (res fuse.ReadResult, code fuse.Status) {
-	log.Printf("Read %s at offset %d", f.Name, off)
-	log.Printf("Read buffer size is %d", len(buf))
+	log.Printf("Read %s at offset %d bufsize %d", f.Name, off, len(buf))
 
 	f.lock.Lock()
 	// TODO(simon): Check the number of bytes read matches?
@@ -91,23 +96,39 @@ func (f* DriveFile) Write(data []byte, off int64) (written uint32,
 	code fuse.Status) {
 	log.Printf("Write %s offset %d", f.Name, off)
 
-	// Drive doesn't allow partial writes, so return not implemented.
-	if off != 0 {
-		log.Print("Write with offset not supported")
-		return 0, fuse.ENOSYS
+	// We buffer writes in memory until the data is flushed.
+
+	// Check whether the buffer is large enough, if not expand it.
+	if cap(f.dataBuffer) < int(off)+len(data) {
+		t := make([]byte, int(off)+len(data))
+		copy(t, f.dataBuffer)
+		f.dataBuffer = t
 	}
 
-	// TODO(simon): Does this upload the whole file?
-	request := f.driveApi.Service.Files.Update(f.Id, &drive.File{})
-	request.Media(bytes.NewReader(data))
-	file, err := request.Do()
-	log.Printf("Updated file, err: %#v, %v", file, err)
+	// Copy the chunk to the buffer.
+	copy(f.dataBuffer[off:], data)
 
-	if err != nil {
-		return 0, fuse.EIO
-	}
+	log.Printf("buffer is currently %d", len(f.dataBuffer))
 
 	return uint32(len(data)), fuse.OK
+}
+
+func (f* DriveFile) Flush() fuse.Status {
+	// TODO(simon): Does this upload the whole file?
+	request := f.driveApi.Service.Files.Update(f.Id, &drive.File{
+		MimeType: binaryMimeType,
+	})
+	request.Media(bytes.NewReader(f.dataBuffer))
+
+	log.Printf("Uploading file %d bytes", len(f.dataBuffer))
+	file, err := request.Do()
+	if err != nil {
+		log.Printf("Error uploading file, err: %#v, %v", file, err)
+		return fuse.EIO
+	}
+
+	log.Printf("Updated file, err: %#v, %v", file, err)
+	return fuse.OK
 }
 
 // The truncate() and ftruncate() functions cause the regular file named
