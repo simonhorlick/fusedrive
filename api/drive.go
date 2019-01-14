@@ -117,12 +117,10 @@ func (d *DriveApi) List() []DriveApiFile {
 
 	var files []DriveApiFile
 
-	fmt.Println("Files:")
 	if len(r.Files) == 0 {
 		fmt.Println("No files found.")
 	} else {
 		for _, i := range r.Files {
-			fmt.Printf("%s (%s)\n", i.Name, i.Id)
 			files = append(files, DriveApiFile{
 				Id: i.Id,
 				Name: i.Name,

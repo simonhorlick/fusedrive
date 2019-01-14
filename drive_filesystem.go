@@ -12,6 +12,7 @@ import (
 	"google.golang.org/api/drive/v3"
 	"log"
 	"math"
+	"strings"
 )
 
 // Verify that interface is implemented.
@@ -84,17 +85,32 @@ func (fs *DriveFileSystem) GetAttr(name string, context *fuse.Context) (
 	return &out, fuse.OK
 }
 
+// OpenDir returns the contents of a directory
 func (fs *DriveFileSystem) OpenDir(name string, context *fuse.Context) (
 	stream []fuse.DirEntry, status fuse.Status) {
 	log.Printf("OpenDir \"%s\"", name)
 
 	output := make([]fuse.DirEntry, 0)
 	for _, entry := range fs.driveApi.List() {
-		d := fuse.DirEntry{
-			Name: entry.Name,
-			Mode: fuse.S_IFREG | 0644,
+		// Files from sub-directories are returned with slashes in their names,
+		// exclude these from the listing.
+		if strings.HasPrefix(entry.Name, name) {
+			relative := strings.TrimPrefix(entry.Name, name)
+			relative = strings.TrimPrefix(relative, "/")
+
+			// If the path contains further separators then it's part of a sub-
+			// directory and we can exclude it.
+			if strings.Contains(relative, "/") {
+				log.Printf("  %s (%s) SUBDIRECTORY", relative, entry.Id)
+			} else {
+				log.Printf("  %s (%s)", relative, entry.Id)
+				d := fuse.DirEntry{
+					Name: relative,
+					Mode: fuse.S_IFREG | 0644,
+				}
+				output = append(output, d)
+			}
 		}
-		output = append(output, d)
 	}
 
 	return output, fuse.OK
