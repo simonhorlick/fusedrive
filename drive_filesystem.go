@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/hanwen/go-fuse/fuse/nodefs"
@@ -10,6 +11,7 @@ import (
 	"log"
 	"math"
 	"strings"
+	"sync"
 )
 
 // Verify that interface is implemented.
@@ -19,6 +21,12 @@ var _ pathfs.FileSystem = &DriveFileSystem{}
 type DriveFileSystem struct {
 	pathfs.FileSystem
 	driveApi *DriveApi
+
+	// pathIdMap maps absolute file paths to their Google Drive ID.
+	pathIdMap map[string]string
+
+	// idMapMutex synchronises access to the pathIdMap.
+	idMapMutex sync.RWMutex
 }
 
 func NewDriveFileSystem(api *DriveApi) pathfs.FileSystem {
@@ -26,6 +34,7 @@ func NewDriveFileSystem(api *DriveApi) pathfs.FileSystem {
 	return &DriveFileSystem{
 		FileSystem: pathfs.NewDefaultFileSystem(),
 		driveApi:   api,
+		pathIdMap:  make(map[string]string),
 	}
 }
 
@@ -50,6 +59,30 @@ func (fs *DriveFileSystem) OnUnmount() {
 	log.Print("OnUnmount")
 }
 
+func (fs *DriveFileSystem) LookupByPath(path string) (string, error) {
+	fs.idMapMutex.RLock()
+	id, ok := fs.pathIdMap[path]
+	fs.idMapMutex.RUnlock()
+
+	if ok {
+		// Cache hit.
+		return id, nil
+	} else {
+		// Cache miss, try and look up on the api.
+		f := fs.driveApi.GetByName(path)
+		if f == nil {
+			return "", errors.New("not found")
+		}
+
+		// Insert the id into the map.
+		fs.idMapMutex.Lock()
+		fs.pathIdMap[path] = f.Id
+		fs.idMapMutex.Unlock()
+
+		return f.Id, nil
+	}
+}
+
 func (fs *DriveFileSystem) GetAttr(name string, context *fuse.Context) (
 	a *fuse.Attr, code fuse.Status) {
 	log.Printf("GetAttr \"%s\"", name)
@@ -59,13 +92,13 @@ func (fs *DriveFileSystem) GetAttr(name string, context *fuse.Context) (
 		return &fuse.Attr{Mode: fuse.S_IFDIR | 0755}, fuse.OK
 	}
 
-	f := fs.driveApi.GetByName(name)
-	if f == nil {
-		log.Printf("file doesn't exist: %s", name)
+	id, err := fs.LookupByPath(name)
+	if err != nil {
+		log.Printf("error: %v", err)
 		return nil, fuse.ENOENT
 	}
 
-	file, err := fs.driveApi.GetAttr(f.Id)
+	file, err := fs.driveApi.GetAttr(id)
 	if err != nil {
 		log.Printf("error getting file attributes: %v", err)
 		return nil, fuse.EIO
@@ -88,6 +121,7 @@ func (fs *DriveFileSystem) OpenDir(name string, context *fuse.Context) (
 	log.Printf("OpenDir \"%s\"", name)
 
 	output := make([]fuse.DirEntry, 0)
+
 	for _, entry := range fs.driveApi.List() {
 		// Files from sub-directories are returned with slashes in their names,
 		// exclude these from the listing.
@@ -117,12 +151,16 @@ func (fs *DriveFileSystem) Open(name string, flags uint32,
 	context *fuse.Context) (fuseFile nodefs.File, status fuse.Status) {
 	log.Printf("Open \"%s\"", name)
 
-	f := fs.driveApi.GetByName(name)
-	if f == nil {
+	id, err := fs.LookupByPath(name)
+	if err != nil {
+		log.Printf("error: %v", err)
 		return nil, fuse.ENOENT
 	}
 
-	return NewDriveFile(fs.driveApi, *f), fuse.OK
+	return NewDriveFile(fs.driveApi, DriveApiFile{
+		Name: name,
+		Id: id,
+	}), fuse.OK
 }
 
 const directoryMimeType = "application/vnd.google-apps.folder"
@@ -169,12 +207,13 @@ func (fs *DriveFileSystem) Create(name string, flags uint32, mode uint32,
 
 func (fs *DriveFileSystem) Unlink(name string, context *fuse.Context) (
 	code fuse.Status) {
-	f := fs.driveApi.GetByName(name)
-	if f == nil {
+	id, err := fs.LookupByPath(name)
+	if err != nil {
+		log.Printf("error: %v", err)
 		return fuse.ENOENT
 	}
 
-	err := fs.driveApi.Service.Files.Delete(f.Id).Do()
+	err = fs.driveApi.Service.Files.Delete(id).Do()
 	if err != nil {
 		log.Printf("failed to delete file: %v", err)
 		return fuse.EIO
