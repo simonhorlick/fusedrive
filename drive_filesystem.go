@@ -169,3 +169,19 @@ func (fs *DriveFileSystem) Create(name string, flags uint32, mode uint32,
 		Id: f.Id,
 	}), fuse.OK
 }
+
+func (fs *DriveFileSystem) Unlink(name string, context *fuse.Context) (
+	code fuse.Status) {
+	f := fs.driveApi.GetByName(name)
+	if f == nil {
+		return fuse.ENOENT
+	}
+
+	err := fs.driveApi.Service.Files.Delete(f.Id).Do()
+	if err != nil {
+		log.Printf("failed to delete file: %v", err)
+		return fuse.EIO
+	}
+
+	return fuse.OK
+}
