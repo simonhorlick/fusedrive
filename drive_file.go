@@ -91,6 +91,12 @@ func (f* DriveFile) Write(data []byte, off int64) (written uint32,
 	code fuse.Status) {
 	log.Printf("Write %s offset %d", f.Name, off)
 
+	// Drive doesn't allow partial writes, so return not implemented.
+	if off != 0 {
+		log.Print("Write with offset not supported")
+		return 0, fuse.ENOSYS
+	}
+
 	// TODO(simon): Does this upload the whole file?
 	request := f.driveApi.Service.Files.Update(f.Id, &drive.File{})
 	request.Media(bytes.NewReader(data))
