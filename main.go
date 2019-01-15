@@ -46,6 +46,12 @@ func main() {
 		Name:       "loopbackfs",
 		FsName:     "drive",
 		Debug:      *debug,
+		MaxWrite: fuse.MAX_KERNEL_WRITE,
+		Options:  []string{
+			"large_read=true",
+			fmt.Sprintf("max_read=%d", fuse.MAX_KERNEL_WRITE),
+		},
+
 	}
 
 	log.Print("Creating fuse server")
