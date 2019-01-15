@@ -82,7 +82,7 @@ func (f *FileReader2) Read(p []byte) (n int, err error) {
 }
 
 func min(a int64, b int64) int64 {
-	if a > b {
+	if a < b {
 		return a
 	} else {
 		return b
