@@ -7,6 +7,7 @@ import (
 	"github.com/hanwen/go-fuse/fuse/nodefs"
 	"github.com/hanwen/go-fuse/fuse/pathfs"
 	. "github.com/simonhorlick/fusedrive/api"
+	"github.com/simonhorlick/fusedrive/serialize_reads"
 	"google.golang.org/api/drive/v3"
 	"log"
 	"math"
@@ -31,6 +32,7 @@ type DriveFileSystem struct {
 
 func NewDriveFileSystem(api *DriveApi) pathfs.FileSystem {
 	log.Print("Creating DriveFileSystem")
+	serialize_reads.InitSerializer()
 	return &DriveFileSystem{
 		FileSystem: pathfs.NewDefaultFileSystem(),
 		driveApi:   api,
