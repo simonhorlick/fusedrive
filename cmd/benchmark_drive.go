@@ -91,7 +91,7 @@ func min(a int64, b int64) int64 {
 
 // ReadAt ...
 func ReadAt(drive *api.DriveApi, id string, size int64, off int64) (io.ReadCloser, error) {
-	log.Printf("Reading %d bytes at offset %d ", size, off)
+	log.Printf("Sending HTTP request for %d bytes at offset %d ", size, off)
 	startRange := off
 	endRange := startRange + size
 
