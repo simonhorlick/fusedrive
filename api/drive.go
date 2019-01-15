@@ -148,6 +148,7 @@ func (d *DriveApi) Read(id string, p []byte) (n int, err error) {
 // ReadAt downloads and returns the contents of the file within the specified
 // range and places it in p.
 func (d *DriveApi) ReadAt(id string, p []byte, off int64) (n int, err error) {
+	log.Printf("ReadAt position %d of %d bytes", off, len(p))
 	startRange := off
 	endRange := startRange + int64(len(p))
 
