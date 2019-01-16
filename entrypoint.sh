@@ -1,3 +1,3 @@
 #!/bin/bash
 
-/bin/fusedrive /media/drive
+/bin/fusedrive -allow-other /media/drive
