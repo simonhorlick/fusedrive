@@ -138,8 +138,6 @@ func (f *FileReader) Read(p []byte) (int, error) {
 		// Point p at the next available space in the buffer.
 		p = p[n:]
 
-		log.Printf("http request returned %d bytes: %v", n, err)
-
 		// Handle end of file for one chunk.
 		if err == io.EOF {
 			log.Printf("EOF for http request")
