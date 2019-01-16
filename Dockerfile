@@ -18,7 +18,7 @@ RUN git clone https://github.com/simonhorlick/fusedrive.git . \
 FROM debian:stretch as final
 
 # Install runtime dependencies.
-RUN apt update && apt install -y fuse
+RUN apt update && apt install -y fuse ca-certificates
 
 # Copy the compiled binaries from the builder image.
 COPY --from=builder /go/bin/fusedrive /bin/
