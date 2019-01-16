@@ -7,12 +7,15 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
 
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/drive/v3"
 )
+
+const credentialsFileName = "credentials.json"
 
 type DriveApi struct {
 	Service *drive.Service
@@ -29,9 +32,10 @@ type DriveApiFile struct {
 	Size uint64
 }
 
-func NewDriveApi() *DriveApi {
-	log.Print("Reading credentials")
-	b, err := ioutil.ReadFile("credentials.json")
+func NewDriveApi(dataPath string) *DriveApi {
+	credentialsFile := path.Join(dataPath, credentialsFileName)
+	log.Printf("Reading credentials from %s", credentialsFile)
+	b, err := ioutil.ReadFile(credentialsFile)
 	if err != nil {
 		log.Fatalf("Unable to read client secret file: %v", err)
 	}

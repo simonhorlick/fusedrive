@@ -18,6 +18,8 @@ func main() {
 	// Scans the arg list and sets up flags
 	debug := flag.Bool("debug", false, "print debugging messages.")
 	other := flag.Bool("allow-other", false, "mount with -o allowother.")
+	dataDir := flag.String("datadir", "/var/fusedrive",
+		"directory to store meta database and credentials file")
 
 	flag.Parse()
 	if flag.NArg() < 1 {
@@ -29,14 +31,9 @@ func main() {
 
 	opts := nodefs.NewOptions()
 
-	driveApi := api.NewDriveApi()
+	driveApi := api.NewDriveApi(*dataDir)
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	db, err := metadb.Open(cwd)
+	db, err := metadb.Open(*dataDir)
 	if err != nil {
 		log.Fatal(err)
 	}
