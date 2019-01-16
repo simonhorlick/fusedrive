@@ -6,6 +6,7 @@ import (
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/hanwen/go-fuse/fuse/nodefs"
 	"github.com/simonhorlick/fusedrive/api"
+	"github.com/simonhorlick/fusedrive/metadb"
 	"github.com/simonhorlick/fusedrive/serialize_reads"
 	"google.golang.org/api/drive/v3"
 	"io"
@@ -17,11 +18,12 @@ var _ nodefs.File = &DriveFile{} // Verify that interface is implemented.
 
 const binaryMimeType = "application/octet-stream"
 
-func NewDriveFile(driveApi *api.DriveApi, file api.DriveApiFile) nodefs.File {
+func NewDriveFile(driveApi *api.DriveApi, db *metadb.DB, file api.DriveApiFile) nodefs.File {
 	return &DriveFile{
 		driveApi: driveApi,
 		File:     NewUnimplementedFile(),
 		DriveApiFile: file,
+		db: db,
 		// Create a write buffer that has capacity for a single write.
 		dataBuffer: make([]byte, 0, fuse.MAX_KERNEL_WRITE),
 	}
@@ -32,11 +34,14 @@ type DriveFile struct {
 
 	api.DriveApiFile
 
+	// The database to store file metadata.
+	db *metadb.DB
+
 	// reader is a read buffer for this file. Data is requested from the api in
 	// large chunks to increase throughput and buffered here until it is
 	// requested. This helps with sequential reads where fuse requests many
 	// small chunks of data.
-	reader io.Reader
+	reader io.ReadCloser
 
 	// readerPosition is the current position of reader in the file. If a read
 	// comes in for an offset that isn't equal to readerPosition we dispose of
@@ -75,7 +80,7 @@ func (f *DriveFile) String() string {
 // calls to Read will be sequential, so we can continue taking data from the
 // Reader and advancing it each time.
 func (f *DriveFile) Read(buf []byte, off int64) (res fuse.ReadResult, code fuse.Status) {
-	log.Printf("DriveFile Read request for %s at offset %d bufsize %d", f.Name, off, len(buf))
+	//log.Printf("DriveFile Read request for %s at offset %d bufsize %d", f.Name, off, len(buf))
 
 	// Read requests can arrive out of order, which kills sequential read
 	// performance. Attempt to re-order them by waiting to see what other
@@ -83,7 +88,7 @@ func (f *DriveFile) Read(buf []byte, off int64) (res fuse.ReadResult, code fuse.
 	serialize_reads.Wait(off, len(buf))
 	defer serialize_reads.Done()
 
-	log.Printf("DriveFile reading %s at offset %d bufsize %d", f.Name, off, len(buf))
+	//log.Printf("DriveFile reading %s at offset %d bufsize %d", f.Name, off, len(buf))
 
 	// If we can reuse an existing reader, then do that. Otherwise create a new
 	// reader at the given offset.
@@ -93,15 +98,19 @@ func (f *DriveFile) Read(buf []byte, off int64) (res fuse.ReadResult, code fuse.
 		// sequential then we'll re-create the reader and mark it
 		// non-sequential.
 		f.reader = api.NewFileReader(f.driveApi, f.Id,
-			f.Size, off, true)
+			f.Size, uint64(off), true)
 	} else if f.readerPosition != off {
 		log.Printf("DriveFile Non-sequential read at offset %d, previous read ended at %d",
 			off, f.readerPosition)
-		//_ = f.reader.Close()
-		f.reader = api.NewFileReader(f.driveApi, f.Id, f.Size, off, false)
+		_ = f.reader.Close()
+		f.reader = api.NewFileReader(f.driveApi, f.Id, f.Size, uint64(off), false)
 	}
 
-	n, err := io.ReadFull(f.reader, buf)
+	remaining := f.Size - uint64(f.readerPosition)
+
+	// buf might be larger than the remaining data in the file, in that case
+	// read as much data as there is remaining. Otherwise just fill buf.
+	n, err := io.ReadAtLeast(f.reader, buf, min(int(remaining), len(buf)))
 	f.readerPosition += int64(n)
 
 	if err == io.EOF {
@@ -115,9 +124,17 @@ func (f *DriveFile) Read(buf []byte, off int64) (res fuse.ReadResult, code fuse.
 		return nil, fuse.EIO
 	}
 
-	log.Printf("DriveFile Read %d bytes", n)
+	//log.Printf("DriveFile Read %d bytes", n)
 
 	return fuse.ReadResultData(buf[:n]), fuse.OK
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	} else {
+		return b
+	}
 }
 
 func (f *DriveFile) Release() {
@@ -126,34 +143,36 @@ func (f *DriveFile) Release() {
 }
 
 func (f *DriveFile) GetAttr(out *fuse.Attr) fuse.Status {
-	file, err := f.driveApi.GetAttr(f.Id)
-	if err != nil {
-		// TODO(simon): Figure out correct return code here.
-		return fuse.EAGAIN
+	log.Printf("GetAttr \"%s\"", f.Name)
+
+	attributes, err := f.db.GetAttributes(f.Name)
+
+	if err == metadb.DoesNotExist {
+		return fuse.ENOENT
+	} else if err != nil {
+		log.Printf("failed to read file metadata %s: %v", f.Name, err)
+		return fuse.ENODATA
 	}
 
-	out.Mode = fuse.S_IFREG | 0644
-	out.Size = uint64(file.Size)
-
-	log.Printf("GetAttr %s: size is %d", f.Name, file.Size)
+	toFuseAttributes(attributes, out)
 
 	return fuse.OK
 }
 
 func (f* DriveFile) Write(data []byte, off int64) (written uint32,
 	code fuse.Status) {
-	log.Printf("Write (%s) %d bytes at offset %d", f.Name, len(data), off)
+	//log.Printf("Write (%s) %d bytes at offset %d", f.Name, len(data), off)
 
 	// We buffer writes in memory until the data is flushed.
 
 	// Check whether the buffer is large enough, if not expand it.
 	used := len(f.dataBuffer)
 	capacity := cap(f.dataBuffer)
-	log.Printf("buffer: used %d/%d", used, capacity)
+	//log.Printf("buffer: used %d/%d", used, capacity)
 
 	if capacity < int(off)+len(data) {
 		newCapacity := capacity * 2
-		log.Printf("buffer: alloc %d/%d", used, newCapacity)
+		//log.Printf("buffer: alloc %d/%d", used, newCapacity)
 
 		// Double the buffer size each time we need to reallocate.
 		t := make([]byte, used, newCapacity)
@@ -165,7 +184,7 @@ func (f* DriveFile) Write(data []byte, off int64) (written uint32,
 	copied := copy(f.dataBuffer[off:int(off)+len(data)], data)
 	f.dataBuffer = f.dataBuffer[0:int(off)+len(data)]
 
-	log.Printf("buffer: copied %d, used %d/%d", copied, len(f.dataBuffer), capacity)
+	//log.Printf("buffer: copied %d, used %d/%d", copied, len(f.dataBuffer), capacity)
 
 	return uint32(copied), fuse.OK
 }
@@ -185,7 +204,7 @@ func (f* DriveFile) Flush() fuse.Status {
 		return fuse.OK
 	}
 
-	// TODO(simon): Does this upload the whole file?
+	// TODO(simon): Cache this locally and retry on failure.
 	request := f.driveApi.Service.Files.Update(f.Id, &drive.File{
 		MimeType: binaryMimeType,
 	})
@@ -195,6 +214,12 @@ func (f* DriveFile) Flush() fuse.Status {
 	file, err := request.Do()
 	if err != nil {
 		log.Printf("Error uploading file, err: %#v, %v", file, err)
+		return fuse.EIO
+	}
+
+	err = f.db.SetSize(f.Name, uint64(len(f.dataBuffer)))
+	if err != nil {
+		log.Printf("error storing file metadata %s: %v", f.Name, err)
 		return fuse.EIO
 	}
 
@@ -223,6 +248,12 @@ func (f *DriveFile) Truncate(size uint64) fuse.Status {
 
 	if err != nil {
 		log.Printf("error truncating file: %v", err)
+		return fuse.EIO
+	}
+
+	err = f.db.SetSize(f.Name, size)
+	if err != nil {
+		log.Printf("error storing file metadata %s: %v", f.Name, err)
 		return fuse.EIO
 	}
 

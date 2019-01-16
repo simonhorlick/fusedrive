@@ -14,7 +14,7 @@ const defaultSequentialReadSize = 512 * 1024 * 1024
 const defaultRandomReadSize = 4 * 1024 * 1024
 
 // min returns the smaller of a and b.
-func min(a int64, b int64) int64 {
+func min(a uint64, b uint64) uint64 {
 	if a < b {
 		return a
 	} else {
@@ -34,24 +34,24 @@ type FileReader struct {
 	id string
 
 	// The position of this reader within the file.
-	position int64
+	position uint64
 
 	// The length of the file.
-	length int64
+	length uint64
 
 	// The current active http response.
 	httpResponse io.ReadCloser
 
 	// The amount of data to read from the api.
-	readSize int64
+	readSize uint64
 }
 
-func NewFileReader(driveApi *DriveApi, id string, length, position int64,
+func NewFileReader(driveApi *DriveApi, id string, length, position uint64,
 	sequential bool) *FileReader {
 
 	// If we're reading sequentially then fetch as much data as possible in each
 	// api call. If we're reading randomly, then just fetch the minimum.
-	var readSize int64
+	var readSize uint64
 	if sequential {
 		readSize = defaultSequentialReadSize
 	} else {
@@ -68,8 +68,12 @@ func NewFileReader(driveApi *DriveApi, id string, length, position int64,
 }
 
 // ReadAt begins streaming the given range of bytes from this file.
-func (f *FileReader) ReadAt(size int64, off int64) (io.ReadCloser, error) {
+func (f *FileReader) ReadAt(size uint64, off uint64) (io.ReadCloser, error) {
 	log.Printf("Sending HTTP request for %d bytes at offset %d ", size, off)
+	if size == 0 {
+		log.Printf("error: Attempted zero byte read")
+		return nil, nil
+	}
 
 	// The byte range specified in the Range header is [start,end] inclusive. So
 	// [0,1023] would return 1024 bytes.
@@ -128,13 +132,13 @@ func (f *FileReader) Read(p []byte) (int, error) {
 		n, err := io.ReadFull(f.httpResponse, p)
 
 		// Increment the readers position in the file.
-		f.position += int64(n)
+		f.position += uint64(n)
 		totalRead += n
 
 		// Point p at the next available space in the buffer.
 		p = p[n:]
 
-		//log.Printf("http request returned %d bytes: %v", n, err)
+		log.Printf("http request returned %d bytes: %v", n, err)
 
 		// Handle end of file for one chunk.
 		if err == io.EOF {
@@ -150,6 +154,7 @@ func (f *FileReader) Read(p []byte) (int, error) {
 			// If possible start a new http request and continue filling p.
 			continue
 		} else if err != nil {
+			log.Printf("http request returned %d bytes: %v", n, err)
 			return totalRead, err
 		}
 	}

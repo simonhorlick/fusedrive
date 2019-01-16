@@ -7,6 +7,7 @@ import (
 	"github.com/hanwen/go-fuse/fuse/nodefs"
 	"github.com/hanwen/go-fuse/fuse/pathfs"
 	"github.com/simonhorlick/fusedrive/api"
+	"github.com/simonhorlick/fusedrive/metadb"
 	"log"
 	"os"
 	"path"
@@ -30,7 +31,18 @@ func main() {
 
 	driveApi := api.NewDriveApi()
 
-	pathFs := pathfs.NewPathNodeFs(NewDriveFileSystem(driveApi),
+	cwd, err := os.Getwd()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	db, err := metadb.Open(cwd)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	pathFs := pathfs.NewPathNodeFs(NewDriveFileSystem(driveApi, db),
 		&pathfs.PathNodeFsOptions{})
 	conn := nodefs.NewFileSystemConnector(pathFs.Root(), opts)
 	mountPoint := flag.Arg(0)
@@ -43,15 +55,13 @@ func main() {
 		Options:  []string{
 			fmt.Sprintf("max_read=%d", fuse.MAX_KERNEL_WRITE),
 		},
-
 	}
 
 	log.Print("Creating fuse server")
 
 	state, err := fuse.NewServer(conn.RawFS(), mountPoint, mOpts)
 	if err != nil {
-		fmt.Printf("Mount fail: %v (is the mount point already in use?)\n", err)
-		os.Exit(1)
+		log.Fatalf("Mount fail: %v (is the mount point already in use?)\n", err)
 	}
 
 	fmt.Println("Mounted!")

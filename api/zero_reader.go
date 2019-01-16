@@ -35,7 +35,7 @@ func (f *ZeroReader) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 
-	n := int(min(int64(len(p)), remaining))
+	n := int(min(uint64(len(p)), uint64(remaining)))
 	for i := 0; i < n; i++ {
 		p[i] = 0
 	}

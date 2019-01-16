@@ -1,19 +1,19 @@
 package main
 
 import (
-	"errors"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/hanwen/go-fuse/fuse/nodefs"
 	"github.com/hanwen/go-fuse/fuse/pathfs"
 	. "github.com/simonhorlick/fusedrive/api"
+	"github.com/simonhorlick/fusedrive/metadb"
 	"github.com/simonhorlick/fusedrive/serialize_reads"
 	"google.golang.org/api/drive/v3"
 	"log"
 	"math"
-	"strings"
-	"sync"
 )
+
+const directoryMimeType = "application/vnd.google-apps.folder"
 
 // Verify that interface is implemented.
 var _ pathfs.FileSystem = &DriveFileSystem{}
@@ -23,25 +23,21 @@ type DriveFileSystem struct {
 	pathfs.FileSystem
 	driveApi *DriveApi
 
-	// pathIdMap maps absolute file paths to their Google Drive ID.
-	pathIdMap map[string]string
-
-	// idMapMutex synchronises access to the pathIdMap.
-	idMapMutex sync.RWMutex
+	// db is a database that stores all of the filesystem metadata.
+	db *metadb.DB
 }
 
-func NewDriveFileSystem(api *DriveApi) pathfs.FileSystem {
+func NewDriveFileSystem(api *DriveApi, db *metadb.DB) pathfs.FileSystem {
 	log.Print("Creating DriveFileSystem")
 	serialize_reads.InitSerializer()
 	return &DriveFileSystem{
 		FileSystem: pathfs.NewDefaultFileSystem(),
 		driveApi:   api,
-		pathIdMap:  make(map[string]string),
+		db: db,
 	}
 }
 
 func (fs *DriveFileSystem) StatFs(name string) *fuse.StatfsOut {
-	log.Printf("StatFs %s", name)
 	return &fuse.StatfsOut{
 		Blocks: math.MaxUint64,
 		Bfree: math.MaxUint64,
@@ -61,32 +57,18 @@ func (fs *DriveFileSystem) OnUnmount() {
 	log.Print("OnUnmount")
 }
 
-func (fs *DriveFileSystem) LookupByPath(path string) (string, error) {
-	fs.idMapMutex.RLock()
-	id, ok := fs.pathIdMap[path]
-	fs.idMapMutex.RUnlock()
-
-	if ok {
-		// Cache hit.
-		return id, nil
+// toFuseAttributes adapts the attributes in the database into fuse attributes.
+func toFuseAttributes(attributes metadb.Attributes, out *fuse.Attr) {
+	if attributes.IsRegularFile {
+		out.Mode = fuse.S_IFREG | attributes.Mode
+		out.Size = attributes.Size
 	} else {
-		// Cache miss, try and look up on the api.
-		f := fs.driveApi.GetByName(path)
-		if f == nil {
-			return "", errors.New("not found")
-		}
-
-		// Insert the id into the map.
-		fs.idMapMutex.Lock()
-		fs.pathIdMap[path] = f.Id
-		fs.idMapMutex.Unlock()
-
-		return f.Id, nil
+		out.Mode = fuse.S_IFDIR | attributes.Mode
 	}
 }
 
 func (fs *DriveFileSystem) GetAttr(name string, context *fuse.Context) (
-	a *fuse.Attr, code fuse.Status) {
+	*fuse.Attr, fuse.Status) {
 	log.Printf("GetAttr \"%s\"", name)
 
 	// The mount point.
@@ -94,27 +76,19 @@ func (fs *DriveFileSystem) GetAttr(name string, context *fuse.Context) (
 		return &fuse.Attr{Mode: fuse.S_IFDIR | 0755}, fuse.OK
 	}
 
-	id, err := fs.LookupByPath(name)
-	if err != nil {
-		log.Printf("error: %v", err)
+	attributes, err := fs.db.GetAttributes(name)
+
+	if err == metadb.DoesNotExist {
 		return nil, fuse.ENOENT
+	} else if err != nil {
+		log.Printf("failed to read file metadata %s: %v", name, err)
+		return nil, fuse.ENODATA
 	}
 
-	file, err := fs.driveApi.GetAttr(id)
-	if err != nil {
-		log.Printf("error getting file attributes: %v", err)
-		return nil, fuse.EIO
-	}
+	out := new(fuse.Attr)
+	toFuseAttributes(attributes, out)
 
-	var out fuse.Attr
-	if file.MimeType == directoryMimeType {
-		out.Mode = fuse.S_IFDIR | 0755
-	} else {
-		out.Mode = fuse.S_IFREG | 0644
-		out.Size = uint64(file.Size)
-	}
-
-	return &out, fuse.OK
+	return out, fuse.OK
 }
 
 // OpenDir returns the contents of a directory
@@ -122,28 +96,27 @@ func (fs *DriveFileSystem) OpenDir(name string, context *fuse.Context) (
 	stream []fuse.DirEntry, status fuse.Status) {
 	log.Printf("OpenDir \"%s\"", name)
 
+	entries, err := fs.db.List(name)
+	if err != nil {
+		log.Printf("failed to read directory listing for %s: %v", name, err)
+		return nil, fuse.EIO
+	}
+
 	output := make([]fuse.DirEntry, 0)
-
-	for _, entry := range fs.driveApi.List() {
-		// Files from sub-directories are returned with slashes in their names,
-		// exclude these from the listing.
-		if strings.HasPrefix(entry.Name, name) {
-			relative := strings.TrimPrefix(entry.Name, name)
-			relative = strings.TrimPrefix(relative, "/")
-
-			// If the path contains further separators then it's part of a sub-
-			// directory and we can exclude it.
-			if strings.Contains(relative, "/") {
-				log.Printf("  %s (%s) SUBDIRECTORY", relative, entry.Id)
-			} else {
-				log.Printf("  %s (%s)", relative, entry.Id)
-				d := fuse.DirEntry{
-					Name: relative,
-					Mode: fuse.S_IFREG | 0644,
-				}
-				output = append(output, d)
-			}
+	for _, entry := range entries {
+		// Is this a regular file or a directory?
+		var fileType uint32
+		if entry.Attributes.IsRegularFile {
+			fileType = fuse.S_IFREG
+		} else {
+			fileType = fuse.S_IFDIR
 		}
+
+		d := fuse.DirEntry{
+			Name: entry.Path,
+			Mode: fileType | entry.Attributes.Mode,
+		}
+		output = append(output, d)
 	}
 
 	return output, fuse.OK
@@ -153,23 +126,19 @@ func (fs *DriveFileSystem) Open(name string, flags uint32,
 	context *fuse.Context) (fuseFile nodefs.File, status fuse.Status) {
 	log.Printf("Open \"%s\"", name)
 
-	id, err := fs.LookupByPath(name)
-	if err != nil {
-		log.Printf("error: %v", err)
+	attributes, err := fs.db.GetAttributes(name)
+
+	if err == metadb.DoesNotExist {
 		return nil, fuse.ENOENT
+	} else if err != nil {
+		log.Printf("failed to read file metadata %s: %v", name, err)
+		return nil, fuse.ENODATA
 	}
 
-	// TODO(simon): This is wasteful, but we need to know the size.
-	file, err := fs.driveApi.GetAttr(id)
-	if err != nil {
-		log.Printf("error getting file attributes: %v", err)
-		return nil, fuse.EIO
-	}
-
-	driveFile := NewDriveFile(fs.driveApi, DriveApiFile{
+	driveFile := NewDriveFile(fs.driveApi, fs.db, DriveApiFile{
 		Name: name,
-		Id: id,
-		Size: file.Size,
+		Id: attributes.Id,
+		Size: attributes.Size,
 	})
 
 	return &nodefs.WithFlags{
@@ -179,8 +148,6 @@ func (fs *DriveFileSystem) Open(name string, flags uint32,
 		File: driveFile,
 	}, fuse.OK
 }
-
-const directoryMimeType = "application/vnd.google-apps.folder"
 
 func (fs *DriveFileSystem) Mkdir(name string, mode uint32, context *fuse.Context) fuse.Status {
 	// A directory is a File with a specific mime type.
@@ -195,7 +162,18 @@ func (fs *DriveFileSystem) Mkdir(name string, mode uint32, context *fuse.Context
 		return fuse.EIO
 	}
 
-	log.Printf("created directory: %s", spew.Sdump(f))
+	err = fs.db.SetAttributes(name, metadb.Attributes{
+		Id: f.Id,
+		Size: 0,
+		Mode: mode,
+		IsRegularFile: false,
+	})
+	if err != nil {
+		log.Printf("failed to create directory %s: %v", name, err)
+		return fuse.EIO
+	}
+
+	log.Printf("Created directory: %s", spew.Sdump(f))
 
 	return fuse.OK
 }
@@ -214,9 +192,20 @@ func (fs *DriveFileSystem) Create(name string, flags uint32, mode uint32,
 		return nil, fuse.EIO
 	}
 
-	log.Printf("created file: %s", spew.Sdump(f))
+	err = fs.db.SetAttributes(name, metadb.Attributes{
+		Id: f.Id,
+		Size: 0,
+		Mode: mode,
+		IsRegularFile: true,
+	})
+	if err != nil {
+		log.Printf("failed to create file %s: %v", name, err)
+		return nil, fuse.EIO
+	}
 
-	return NewDriveFile(fs.driveApi, DriveApiFile{
+	log.Printf("Created file: %s", spew.Sdump(f))
+
+	return NewDriveFile(fs.driveApi, fs.db, DriveApiFile{
 		Name: f.Name,
 		Id: f.Id,
 	}), fuse.OK
@@ -224,20 +213,19 @@ func (fs *DriveFileSystem) Create(name string, flags uint32, mode uint32,
 
 func (fs *DriveFileSystem) Unlink(name string, context *fuse.Context) (
 	code fuse.Status) {
-	id, err := fs.LookupByPath(name)
-	if err != nil {
-		log.Printf("error: %v", err)
+	attributes, err := fs.db.GetAndDeleteAttributes(name)
+	if err == metadb.DoesNotExist {
 		return fuse.ENOENT
 	}
 
-	// Remove the entry from the id cache.
-	fs.idMapMutex.Lock()
-	delete(fs.pathIdMap, name)
-	fs.idMapMutex.Unlock()
-
-	err = fs.driveApi.Service.Files.Delete(id).Do()
 	if err != nil {
-		log.Printf("failed to delete file: %v", err)
+		log.Printf("failed to delete metadata for file %s: %v", name, err)
+		return fuse.EIO
+	}
+
+	err = fs.driveApi.Service.Files.Delete(attributes.Id).Do()
+	if err != nil {
+		log.Printf("failed to delete file %s on remote: %v", name, err)
 		return fuse.EIO
 	}
 
@@ -246,22 +234,5 @@ func (fs *DriveFileSystem) Unlink(name string, context *fuse.Context) (
 
 func (fs *DriveFileSystem) Rmdir(name string, context *fuse.Context) (
 	code fuse.Status) {
-	id, err := fs.LookupByPath(name)
-	if err != nil {
-		log.Printf("error: %v", err)
-		return fuse.ENOENT
-	}
-
-	// Remove the entry from the id cache.
-	fs.idMapMutex.Lock()
-	delete(fs.pathIdMap, name)
-	fs.idMapMutex.Unlock()
-
-	err = fs.driveApi.Service.Files.Delete(id).Do()
-	if err != nil {
-		log.Printf("failed to delete directory: %v", err)
-		return fuse.EIO
-	}
-
-	return fuse.OK
+	return fs.Unlink(name, context)
 }

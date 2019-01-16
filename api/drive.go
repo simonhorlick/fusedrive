@@ -19,9 +19,14 @@ type DriveApi struct {
 }
 
 type DriveApiFile struct {
+	// The absolute path name that this file belongs to.
 	Name string
+
+	// The Google Drive id of this file.
 	Id   string
-	Size int64
+
+	// The size of this file in bytes.
+	Size uint64
 }
 
 func NewDriveApi() *DriveApi {
@@ -123,44 +128,10 @@ func (d *DriveApi) List() []DriveApiFile {
 			files = append(files, DriveApiFile{
 				Id: i.Id,
 				Name: i.Name,
-				Size: i.Size,
+				Size: uint64(i.Size),
 			})
 		}
 	}
 
 	return files
-}
-
-const fieldsToReturn = "id,name,size,md5Checksum,trashed,modifiedTime,createdTime,parents,mimeType"
-
-// GetAttr returns the metadata for the file.
-func (d *DriveApi) GetAttr(id string) (*drive.File, error) {
-	log.Printf("DriveApiFile GetAttr (%s)", id)
-	return d.Service.Files.Get(id).Fields(fieldsToReturn).Do()
-}
-
-// Create makes a new file.
-func (d *DriveApi) Create() {
-	log.Print("DriveApiFile Create")
-	// TODO(simon): Implement
-}
-
-// Write replaces the file in its entirety.
-func (d *DriveApi) Write() {
-	log.Print("DriveApiFile Write")
-
-	// TODO(simon): Implement
-}
-
-func (d *DriveApi) GetByName(s string) *DriveApiFile {
-	log.Printf("DriveApiFile GetByName %s", s)
-
-	// TODO(simon): Is this the best way? Seems inefficient.
-	for _, file := range d.List() {
-		if file.Name == s {
-			return &file
-		}
-	}
-
-	return nil
 }
