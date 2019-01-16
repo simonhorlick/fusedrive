@@ -10,7 +10,7 @@ MAINTAINER Simon Horlick <simonhorlick@gmail.com>
 
 WORKDIR $GOPATH/src/github.com/simonhorlick/fusedrive
 
-# Grab and install the latest version of of btcd and all related dependencies.
+# Grab and install the latest version and all related dependencies.
 RUN git clone https://github.com/simonhorlick/fusedrive.git . \
     &&  GO111MODULE=on go install -v .
 
