@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"github.com/hanwen/go-fuse/fuse"
@@ -23,7 +22,8 @@ func NewDriveFile(driveApi *api.DriveApi, file api.DriveApiFile) nodefs.File {
 		driveApi: driveApi,
 		File:     NewUnimplementedFile(),
 		DriveApiFile: file,
-		dataBuffer: make([]byte, 0),
+		// Create a write buffer that has capacity for a single write.
+		dataBuffer: make([]byte, 0, fuse.MAX_KERNEL_WRITE),
 	}
 }
 
@@ -36,7 +36,7 @@ type DriveFile struct {
 	// large chunks to increase throughput and buffered here until it is
 	// requested. This helps with sequential reads where fuse requests many
 	// small chunks of data.
-	reader *bufio.Reader
+	reader io.Reader
 
 	// readerPosition is the current position of reader in the file. If a read
 	// comes in for an offset that isn't equal to readerPosition we dispose of
@@ -67,8 +67,6 @@ func (f *DriveFile) String() string {
 	return fmt.Sprintf("DriveFile(%s)", f.Name)
 }
 
-const defaultReadSize = 16 * 1024 * 1024
-
 // Read reads a range of bytes from the remote file. What happens here is that
 // fuse requests many small reads which if sent directly to the remote will
 // incur huge latency and slow down reads drastically. Instead we open a Reader
@@ -77,7 +75,7 @@ const defaultReadSize = 16 * 1024 * 1024
 // calls to Read will be sequential, so we can continue taking data from the
 // Reader and advancing it each time.
 func (f *DriveFile) Read(buf []byte, off int64) (res fuse.ReadResult, code fuse.Status) {
-	log.Printf("DriveFile Read %s at offset %d bufsize %d", f.Name, off, len(buf))
+	log.Printf("DriveFile Read request for %s at offset %d bufsize %d", f.Name, off, len(buf))
 
 	// Read requests can arrive out of order, which kills sequential read
 	// performance. Attempt to re-order them by waiting to see what other
@@ -85,26 +83,31 @@ func (f *DriveFile) Read(buf []byte, off int64) (res fuse.ReadResult, code fuse.
 	serialize_reads.Wait(off, len(buf))
 	defer serialize_reads.Done()
 
+	log.Printf("DriveFile reading %s at offset %d bufsize %d", f.Name, off, len(buf))
+
 	// If we can reuse an existing reader, then do that. Otherwise create a new
 	// reader at the given offset.
 	if f.reader == nil {
 		log.Printf("DriveFile New reader created at offset %d", off)
-		f.readerPosition = off
-		f.reader = bufio.NewReaderSize(api.NewFileReader(f.driveApi, f.Id, off),
-			defaultReadSize)
+		// Start off by assuming sequential reads, if the reads aren't
+		// sequential then we'll re-create the reader and mark it
+		// non-sequential.
+		f.reader = api.NewFileReader(f.driveApi, f.Id,
+			f.Size, off, true)
 	} else if f.readerPosition != off {
 		log.Printf("DriveFile Non-sequential read at offset %d, previous read ended at %d",
 			off, f.readerPosition)
-		f.reader = bufio.NewReaderSize(api.NewFileReader(f.driveApi, f.Id, off),
-			defaultReadSize)
+		//_ = f.reader.Close()
+		f.reader = api.NewFileReader(f.driveApi, f.Id, f.Size, off, false)
 	}
-
-	// TODO(simon): Make a buffered reader that also prefetches ranges in
-	// parallel. If a sequential read is detected, just fetch the next n chunks
-	// as well.
 
 	n, err := io.ReadFull(f.reader, buf)
 	f.readerPosition += int64(n)
+
+	if err == io.EOF {
+		log.Printf("DriveFile received EOF")
+		return fuse.ReadResultData(buf[:n]), fuse.OK
+	}
 
 	if err != nil {
 		// TODO(simon): Figure out the correct error code here.
@@ -114,7 +117,7 @@ func (f *DriveFile) Read(buf []byte, off int64) (res fuse.ReadResult, code fuse.
 
 	log.Printf("DriveFile Read %d bytes", n)
 
-	return fuse.ReadResultData(buf), fuse.OK
+	return fuse.ReadResultData(buf[:n]), fuse.OK
 }
 
 func (f *DriveFile) Release() {
@@ -123,8 +126,6 @@ func (f *DriveFile) Release() {
 }
 
 func (f *DriveFile) GetAttr(out *fuse.Attr) fuse.Status {
-	log.Printf("GetAttr %s", f.Name)
-
 	file, err := f.driveApi.GetAttr(f.Id)
 	if err != nil {
 		// TODO(simon): Figure out correct return code here.
@@ -133,6 +134,9 @@ func (f *DriveFile) GetAttr(out *fuse.Attr) fuse.Status {
 
 	out.Mode = fuse.S_IFREG | 0644
 	out.Size = uint64(file.Size)
+
+	log.Printf("GetAttr %s: size is %d", f.Name, file.Size)
+
 	return fuse.OK
 }
 
@@ -143,19 +147,27 @@ func (f* DriveFile) Write(data []byte, off int64) (written uint32,
 	// We buffer writes in memory until the data is flushed.
 
 	// Check whether the buffer is large enough, if not expand it.
-	if cap(f.dataBuffer) < int(off)+len(data) {
+	used := len(f.dataBuffer)
+	capacity := cap(f.dataBuffer)
+	log.Printf("buffer: used %d/%d", used, capacity)
+
+	if capacity < int(off)+len(data) {
+		newCapacity := capacity * 2
+		log.Printf("buffer: alloc %d/%d", used, newCapacity)
+
 		// Double the buffer size each time we need to reallocate.
-		t := make([]byte, max(int(off)+len(data), cap(f.dataBuffer) * 2))
+		t := make([]byte, used, newCapacity)
 		copy(t, f.dataBuffer)
-		f.dataBuffer = t
+		f.dataBuffer = t[:used]
 	}
 
 	// Copy the chunk to the buffer.
-	copy(f.dataBuffer[off:], data)
+	copied := copy(f.dataBuffer[off:int(off)+len(data)], data)
+	f.dataBuffer = f.dataBuffer[0:int(off)+len(data)]
 
-	log.Printf("buffer is currently %d", len(f.dataBuffer))
+	log.Printf("buffer: copied %d, used %d/%d", copied, len(f.dataBuffer), capacity)
 
-	return uint32(len(data)), fuse.OK
+	return uint32(copied), fuse.OK
 }
 
 // max returns the larger of the two arguments.

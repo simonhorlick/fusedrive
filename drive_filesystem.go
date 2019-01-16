@@ -159,10 +159,25 @@ func (fs *DriveFileSystem) Open(name string, flags uint32,
 		return nil, fuse.ENOENT
 	}
 
-	return NewDriveFile(fs.driveApi, DriveApiFile{
+	// TODO(simon): This is wasteful, but we need to know the size.
+	file, err := fs.driveApi.GetAttr(id)
+	if err != nil {
+		log.Printf("error getting file attributes: %v", err)
+		return nil, fuse.EIO
+	}
+
+	driveFile := NewDriveFile(fs.driveApi, DriveApiFile{
 		Name: name,
 		Id: id,
-	}), fuse.OK
+		Size: file.Size,
+	})
+
+	return &nodefs.WithFlags{
+		// Disable kernel page cache. This option prevents the kernel from
+		// requesting reads non-sequentially.
+		FuseFlags: fuse.FOPEN_DIRECT_IO,
+		File: driveFile,
+	}, fuse.OK
 }
 
 const directoryMimeType = "application/vnd.google-apps.folder"
@@ -215,6 +230,11 @@ func (fs *DriveFileSystem) Unlink(name string, context *fuse.Context) (
 		return fuse.ENOENT
 	}
 
+	// Remove the entry from the id cache.
+	fs.idMapMutex.Lock()
+	delete(fs.pathIdMap, name)
+	fs.idMapMutex.Unlock()
+
 	err = fs.driveApi.Service.Files.Delete(id).Do()
 	if err != nil {
 		log.Printf("failed to delete file: %v", err)
@@ -231,6 +251,11 @@ func (fs *DriveFileSystem) Rmdir(name string, context *fuse.Context) (
 		log.Printf("error: %v", err)
 		return fuse.ENOENT
 	}
+
+	// Remove the entry from the id cache.
+	fs.idMapMutex.Lock()
+	delete(fs.pathIdMap, name)
+	fs.idMapMutex.Unlock()
 
 	err = fs.driveApi.Service.Files.Delete(id).Do()
 	if err != nil {

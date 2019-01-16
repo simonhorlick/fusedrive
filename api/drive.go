@@ -1,10 +1,8 @@
 package api
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -22,7 +20,8 @@ type DriveApi struct {
 
 type DriveApiFile struct {
 	Name string
-	Id string
+	Id   string
+	Size int64
 }
 
 func NewDriveApi() *DriveApi {
@@ -124,47 +123,12 @@ func (d *DriveApi) List() []DriveApiFile {
 			files = append(files, DriveApiFile{
 				Id: i.Id,
 				Name: i.Name,
+				Size: i.Size,
 			})
 		}
 	}
 
 	return files
-}
-
-// Read downloads and returns the contents of the entire file in p.
-func (d *DriveApi) Read(id string, p []byte) (n int, err error) {
-	log.Print("DriveApiFile Read")
-
-	response, err := d.Service.Files.Get(id).Download()
-	if err != nil {
-		return 0, err
-	}
-
-	defer response.Body.Close()
-	written, err := io.Copy(bytes.NewBuffer(p), response.Body)
-	return int(written), err
-}
-
-// ReadAt downloads and returns the contents of the file within the specified
-// range and places it in p.
-func (d *DriveApi) ReadAt(id string, p []byte, off int64) (n int, err error) {
-	log.Printf("ReadAt position %d of %d bytes", off, len(p))
-	startRange := off
-	endRange := startRange + int64(len(p))
-
-	request := d.Service.Files.Get(id)
-	request.Header().Add("Range", fmt.Sprintf("bytes=%d-%d", startRange, endRange))
-
-	response, err := request.Download()
-	if err != nil {
-		log.Printf("Response error %v", err)
-		return 0, err
-	}
-
-	defer response.Body.Close()
-
-	written, err := io.ReadFull(response.Body, p)
-	return int(written), err
 }
 
 const fieldsToReturn = "id,name,size,md5Checksum,trashed,modifiedTime,createdTime,parents,mimeType"

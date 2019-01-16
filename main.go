@@ -48,7 +48,6 @@ func main() {
 		Debug:      *debug,
 		MaxWrite: fuse.MAX_KERNEL_WRITE,
 		Options:  []string{
-			"large_read=true",
 			fmt.Sprintf("max_read=%d", fuse.MAX_KERNEL_WRITE),
 		},
 
