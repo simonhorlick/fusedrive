@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/hanwen/go-fuse/fuse/nodefs"
@@ -12,8 +13,6 @@ import (
 	"log"
 	"math"
 )
-
-const directoryMimeType = "application/vnd.google-apps.folder"
 
 // Verify that interface is implemented.
 var _ pathfs.FileSystem = &DriveFileSystem{}
@@ -149,21 +148,27 @@ func (fs *DriveFileSystem) Open(name string, flags uint32,
 	}, fuse.OK
 }
 
-func (fs *DriveFileSystem) Mkdir(name string, mode uint32, context *fuse.Context) fuse.Status {
-	// A directory is a File with a specific mime type.
-	newFile := &drive.File{
-		Name: name,
-		MimeType: directoryMimeType,
-	}
-
-	f, err := fs.driveApi.Service.Files.Create(newFile).Do()
+func RandomBytes() []byte {
+	buf := [33]byte{}
+	_, err := rand.Read(buf[:])
 	if err != nil {
-		log.Printf("failed to create directory: %v", err)
-		return fuse.EIO
+		panic("Unable to generate random int")
 	}
 
-	err = fs.db.SetAttributes(name, metadb.Attributes{
-		Id: f.Id,
+	return buf[:]
+}
+
+// GenerateId returns a random id in roughly the same format as Google Drive.
+func GenerateId() string {
+	return string(RandomBytes())
+}
+
+func (fs *DriveFileSystem) Mkdir(name string, mode uint32, context *fuse.Context) fuse.Status {
+	log.Printf("Mkdir \"%s\"", name)
+
+	err := fs.db.SetAttributes(name, metadb.Attributes{
+		// This is only ever used locally, so just generate a random id.
+		Id: GenerateId(),
 		Size: 0,
 		Mode: mode,
 		IsRegularFile: false,
@@ -172,8 +177,6 @@ func (fs *DriveFileSystem) Mkdir(name string, mode uint32, context *fuse.Context
 		log.Printf("failed to create directory %s: %v", name, err)
 		return fuse.EIO
 	}
-
-	log.Printf("Created directory: %s", spew.Sdump(f))
 
 	return fuse.OK
 }
@@ -213,6 +216,8 @@ func (fs *DriveFileSystem) Create(name string, flags uint32, mode uint32,
 
 func (fs *DriveFileSystem) Unlink(name string, context *fuse.Context) (
 	code fuse.Status) {
+	log.Printf("Unlink \"%s\"", name)
+
 	attributes, err := fs.db.GetAndDeleteAttributes(name)
 	if err == metadb.DoesNotExist {
 		return fuse.ENOENT
@@ -232,7 +237,18 @@ func (fs *DriveFileSystem) Unlink(name string, context *fuse.Context) (
 	return fuse.OK
 }
 
-func (fs *DriveFileSystem) Rmdir(name string, context *fuse.Context) (
-	code fuse.Status) {
-	return fs.Unlink(name, context)
+func (fs *DriveFileSystem) Rmdir(name string, context *fuse.Context) fuse.Status {
+	log.Printf("Rmdir \"%s\"", name)
+
+	_, err := fs.db.GetAndDeleteAttributes(name)
+	if err == metadb.DoesNotExist {
+		return fuse.ENOENT
+	}
+
+	if err != nil {
+		log.Printf("failed to delete metadata for directory %s: %v", name, err)
+		return fuse.EIO
+	}
+
+	return fuse.OK
 }
