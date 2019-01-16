@@ -23,6 +23,8 @@ var (
 	pathsBucket = []byte("paths-bucket")
 
 	DoesNotExist = errors.New("does not exist")
+
+	AlreadyExists = errors.New("already exists")
 )
 
 // Attributes describes a node on the filesystem.
@@ -305,5 +307,44 @@ func (d *DB) SetSize(path string, size uint64) error {
 		}
 		return b.Put(k, updated)
 	})
+}
 
+func (d *DB) Rename(oldName string, newName string) error {
+	log.Printf("Rename %s -> %s", oldName, newName)
+	return d.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(pathsBucket)
+
+		k := serialisePath(oldName)
+		v := b.Get(k)
+		if v == nil {
+			return DoesNotExist
+		}
+
+		k2 := serialisePath(newName)
+		v2 := b.Get(k2)
+		if v2 != nil {
+			return AlreadyExists
+		}
+
+		c := b.Cursor()
+
+		prefix := serialisePath(oldName)
+		newPrefix := serialisePath(newName)
+
+		// Rename all children.
+		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
+			unPrefixed := k[len(prefix):]
+			newKey := append(newPrefix, unPrefixed...)
+
+			log.Printf("Renaming key %s -> %s", k, newKey)
+			if err := b.Put(newKey, v); err != nil {
+				return err
+			}
+			if err := b.Delete(k); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 }

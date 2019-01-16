@@ -182,6 +182,27 @@ func (fs *DriveFileSystem) Mkdir(name string, mode uint32, context *fuse.Context
 	return fuse.OK
 }
 
+func (fs *DriveFileSystem) Rename(oldName string, newName string,
+	context *fuse.Context) (code fuse.Status) {
+	log.Printf("Rename \"%s\" -> \"%s\"", oldName, newName)
+
+	err := fs.db.Rename(oldName, newName)
+	if err == metadb.DoesNotExist {
+		return fuse.ENOENT
+	}
+	if err == metadb.AlreadyExists {
+		return fuse.EINVAL
+	}
+
+	if err != nil {
+		log.Printf("failed to rename file %s: %v", oldName)
+		return fuse.EIO
+	}
+
+	return fuse.OK
+}
+
+
 func (fs *DriveFileSystem) Create(name string, flags uint32, mode uint32,
 	context *fuse.Context) (file nodefs.File, code fuse.Status) {
 	log.Printf("Creating file \"%s\"", name)
