@@ -36,7 +36,7 @@ func main() {
 	mountPoint := flag.Arg(0)
 	mOpts := &fuse.MountOptions{
 		AllowOther: *other,
-		Name:       "loopbackfs",
+		Name:       "fusedrive",
 		FsName:     "drive",
 		Debug:      *debug,
 		MaxWrite: fuse.MAX_KERNEL_WRITE,
