@@ -33,18 +33,18 @@ func NewDriveFileSystem(api *DriveApi, db *metadb.DB) pathfs.FileSystem {
 	return &DriveFileSystem{
 		FileSystem: pathfs.NewDefaultFileSystem(),
 		driveApi:   api,
-		db: db,
+		db:         db,
 	}
 }
 
 func (fs *DriveFileSystem) StatFs(name string) *fuse.StatfsOut {
 	return &fuse.StatfsOut{
 		Blocks: math.MaxUint64,
-		Bfree: math.MaxUint64,
+		Bfree:  math.MaxUint64,
 		Bavail: math.MaxUint64,
-		Files: 0,
-		Ffree: math.MaxUint64,
-		Bsize: uint32(16 * 1024 * 1024),
+		Files:  0,
+		Ffree:  math.MaxUint64,
+		Bsize:  uint32(16 * 1024 * 1024),
 		Frsize: uint32(16 * 1024 * 1024),
 	}
 }
@@ -137,7 +137,7 @@ func (fs *DriveFileSystem) Open(name string, flags uint32,
 
 	driveFile := NewDriveFile(fs.driveApi, fs.db, DriveApiFile{
 		Name: name,
-		Id: attributes.Id,
+		Id:   attributes.Id,
 		Size: attributes.Size,
 	})
 
@@ -145,7 +145,7 @@ func (fs *DriveFileSystem) Open(name string, flags uint32,
 		// Disable kernel page cache. This option prevents the kernel from
 		// requesting reads non-sequentially.
 		FuseFlags: fuse.FOPEN_DIRECT_IO,
-		File: driveFile,
+		File:      driveFile,
 	}, fuse.OK
 }
 
@@ -169,9 +169,9 @@ func (fs *DriveFileSystem) Mkdir(name string, mode uint32, context *fuse.Context
 
 	err := fs.db.SetAttributes(name, metadb.Attributes{
 		// This is only ever used locally, so just generate a random id.
-		Id: GenerateId(),
-		Size: 0,
-		Mode: mode,
+		Id:            GenerateId(),
+		Size:          0,
+		Mode:          mode,
 		IsRegularFile: false,
 	})
 	if err != nil {
@@ -197,9 +197,9 @@ func (fs *DriveFileSystem) Create(name string, flags uint32, mode uint32,
 	}
 
 	err = fs.db.SetAttributes(name, metadb.Attributes{
-		Id: f.Id,
-		Size: 0,
-		Mode: mode,
+		Id:            f.Id,
+		Size:          0,
+		Mode:          mode,
 		IsRegularFile: true,
 	})
 	if err != nil {
@@ -211,7 +211,7 @@ func (fs *DriveFileSystem) Create(name string, flags uint32, mode uint32,
 
 	return NewDriveFile(fs.driveApi, fs.db, DriveApiFile{
 		Name: f.Name,
-		Id: f.Id,
+		Id:   f.Id,
 	}), fuse.OK
 }
 

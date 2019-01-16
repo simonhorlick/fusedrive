@@ -20,10 +20,10 @@ const binaryMimeType = "application/octet-stream"
 
 func NewDriveFile(driveApi *api.DriveApi, db *metadb.DB, file api.DriveApiFile) nodefs.File {
 	return &DriveFile{
-		driveApi: driveApi,
-		File:     NewUnimplementedFile(),
+		driveApi:     driveApi,
+		File:         NewUnimplementedFile(),
 		DriveApiFile: file,
-		db: db,
+		db:           db,
 		// Create a write buffer that has capacity for a single write.
 		dataBuffer: make([]byte, 0, fuse.MAX_KERNEL_WRITE),
 	}
@@ -159,7 +159,7 @@ func (f *DriveFile) GetAttr(out *fuse.Attr) fuse.Status {
 	return fuse.OK
 }
 
-func (f* DriveFile) Write(data []byte, off int64) (written uint32,
+func (f *DriveFile) Write(data []byte, off int64) (written uint32,
 	code fuse.Status) {
 	//log.Printf("Write (%s) %d bytes at offset %d", f.Name, len(data), off)
 
@@ -182,7 +182,7 @@ func (f* DriveFile) Write(data []byte, off int64) (written uint32,
 
 	// Copy the chunk to the buffer.
 	copied := copy(f.dataBuffer[off:int(off)+len(data)], data)
-	f.dataBuffer = f.dataBuffer[0:int(off)+len(data)]
+	f.dataBuffer = f.dataBuffer[0 : int(off)+len(data)]
 
 	//log.Printf("buffer: copied %d, used %d/%d", copied, len(f.dataBuffer), capacity)
 
@@ -198,7 +198,7 @@ func max(a, b int) int {
 	}
 }
 
-func (f* DriveFile) Flush() fuse.Status {
+func (f *DriveFile) Flush() fuse.Status {
 	if len(f.dataBuffer) == 0 {
 		log.Print("Flush nothing to do, no data buffered.")
 		return fuse.OK

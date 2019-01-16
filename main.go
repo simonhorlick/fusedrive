@@ -48,8 +48,8 @@ func main() {
 		Name:       "fusedrive",
 		FsName:     "drive",
 		Debug:      *debug,
-		MaxWrite: fuse.MAX_KERNEL_WRITE,
-		Options:  []string{
+		MaxWrite:   fuse.MAX_KERNEL_WRITE,
+		Options: []string{
 			fmt.Sprintf("max_read=%d", fuse.MAX_KERNEL_WRITE),
 		},
 	}
