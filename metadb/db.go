@@ -229,12 +229,20 @@ func (d *DB) List(path string) ([]Entry, error) {
 	err := d.View(func(tx *bolt.Tx) error {
 		c := tx.Bucket(pathsBucket).Cursor()
 
+		var exists bool
+
+		// The root directory always exists.
+		if path == "" {
+			exists = true
+		}
+
 		prefix := serialisePath(path)
 		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
 			fmt.Printf("key=%s, value=%s\n", k, v)
 
 			// Skip the directory we're listing.
 			if bytes.Equal(k, prefix) {
+				exists = true
 				continue
 			}
 
@@ -258,10 +266,19 @@ func (d *DB) List(path string) ([]Entry, error) {
 			})
 		}
 
+		if !exists {
+			return DoesNotExist
+		}
+
 		return nil
 	})
 
 	return entries, err
+}
+
+func (d *DB) IsDirectoryEmpty(path string) (bool, error) {
+	entries, err := d.List(path)
+	return len(entries) == 0, err
 }
 
 func (d *DB) SetSize(path string, size uint64) error {

@@ -12,6 +12,7 @@ import (
 	"google.golang.org/api/drive/v3"
 	"log"
 	"math"
+	"syscall"
 )
 
 // Verify that interface is implemented.
@@ -240,9 +241,19 @@ func (fs *DriveFileSystem) Unlink(name string, context *fuse.Context) (
 func (fs *DriveFileSystem) Rmdir(name string, context *fuse.Context) fuse.Status {
 	log.Printf("Rmdir \"%s\"", name)
 
-	_, err := fs.db.GetAndDeleteAttributes(name)
+	empty, err := fs.db.IsDirectoryEmpty(name)
 	if err == metadb.DoesNotExist {
 		return fuse.ENOENT
+	}
+
+	if !empty {
+		return fuse.Status(syscall.ENOTEMPTY)
+	}
+
+	attributes, err := fs.db.GetAndDeleteAttributes(name)
+
+	if attributes.IsRegularFile {
+		return fuse.ENOTDIR
 	}
 
 	if err != nil {

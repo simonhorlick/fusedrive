@@ -164,6 +164,26 @@ func TestListSubDirectory(t *testing.T) {
 	}
 }
 
+// TestListDoesntExist ensures calling List on a directory that doesn't exist
+// returns the correct error code.
+func TestListDoesntExist(t *testing.T) {
+	dir, err := ioutil.TempDir("", "TestListDoesntExist")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	db, err := Open(dir)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = db.List("a")
+	if err != DoesNotExist {
+		t.Fatal("Expecting directory to not exist")
+	}
+}
+
 func TestSetSize(t *testing.T) {
 	dir, err := ioutil.TempDir("", "TestSetSize")
 	if err != nil {
