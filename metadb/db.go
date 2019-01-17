@@ -392,3 +392,28 @@ func (d *DB) PutFile(path string, data []byte) error {
 		return b.Put(serialisePath(path), data)
 	})
 }
+
+func (d *DB) SetMode(path string, mode uint32) error {
+	log.Printf("SetMode %s: %d", path, mode)
+	return d.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(pathsBucket)
+		k := serialisePath(path)
+		v := b.Get(k)
+		if v == nil {
+			return DoesNotExist
+		}
+
+		attributes, err := readAttributes(bytes.NewReader(v))
+		if err != nil {
+			return err
+		}
+
+		attributes.Mode = mode
+
+		newAttributes, err := serialiseAttributes(attributes)
+		if err != nil {
+			return err
+		}
+		return b.Put(k, newAttributes)
+	})
+}

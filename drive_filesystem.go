@@ -308,3 +308,15 @@ func (fs *DriveFileSystem) Rmdir(name string, context *fuse.Context) fuse.Status
 
 	return fuse.OK
 }
+
+func (fs *DriveFileSystem) Chmod(name string, mode uint32,
+	context *fuse.Context) (code fuse.Status) {
+	err := fs.db.SetMode(name, mode)
+	if err == metadb.DoesNotExist {
+		return fuse.ENOENT
+	} else if err != nil {
+		return fuse.EIO
+	}
+
+	return fuse.OK
+}
