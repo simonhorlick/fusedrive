@@ -122,34 +122,6 @@ func saveToken(path string, token *oauth2.Token) {
 	json.NewEncoder(f).Encode(token)
 }
 
-// List returns a list of files and their ids.
-// TODO(simon): Handle pagination.
-func (d *DriveApi) List() []DriveApiFile {
-	log.Print("DriveApi List")
-
-	r, err := d.Service.Files.List().PageSize(10).
-		Fields("nextPageToken, files(id, name)").Do()
-	if err != nil {
-		log.Fatalf("Unable to retrieve files: %v", err)
-	}
-
-	var files []DriveApiFile
-
-	if len(r.Files) == 0 {
-		fmt.Println("No files found.")
-	} else {
-		for _, i := range r.Files {
-			files = append(files, DriveApiFile{
-				Id: i.Id,
-				Name: i.Name,
-				Size: uint64(i.Size),
-			})
-		}
-	}
-
-	return files
-}
-
 // Upload replaces the contents of the file referenced by id with the data from
 // reader.
 func (d *DriveApi) Upload(id string, reader io.Reader) error {
