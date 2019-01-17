@@ -194,7 +194,7 @@ func serialisePath(path string) []byte {
 }
 
 func (d *DB) GetAttributes(path string) (Attributes, error) {
-	log.Printf("GetAttributes %s", path)
+	//log.Printf("GetAttributes %s", path)
 	var attributes Attributes
 	var err error
 	err = d.View(func(tx *bolt.Tx) error {
@@ -263,8 +263,6 @@ func (d *DB) List(path string) ([]Entry, error) {
 
 		prefix := serialisePath(path)
 		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
-			fmt.Printf("key=%s, value=%s\n", k, v)
-
 			// Skip the directory we're listing.
 			if bytes.Equal(k, prefix) {
 				exists = true

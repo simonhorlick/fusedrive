@@ -5,6 +5,7 @@ import (
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/hanwen/go-fuse/fuse/nodefs"
 	"github.com/simonhorlick/fusedrive/api"
+	"github.com/simonhorlick/fusedrive/metadb"
 	"log"
 	"os"
 	"sync"
@@ -12,12 +13,16 @@ import (
 )
 
 // WritableFile delegates all operations back to an underlying os.File.
-func NewWritableFile(f *os.File, id string, syncer *api.Syncer) nodefs.File {
+func NewWritableFile(f *os.File, id, name string, syncer *api.Syncer,
+	db *metadb.DB, closer func()) nodefs.File {
 	return &WritableFile{
 		fd: f,
 		File: NewUnimplementedFile(),
 		Id: id,
+		Name: name,
 		syncer: syncer,
+		closer: closer,
+		db: db,
 	}
 }
 
@@ -27,7 +32,8 @@ type WritableFile struct {
 	fd *os.File
 
 	// Id is the Google Drive identifier for this file.
-	Id string
+	Id   string
+	Name string
 
 	// syncer uploads file contents asynchronously.
 	syncer *api.Syncer
@@ -43,6 +49,12 @@ type WritableFile struct {
 	// operation we have not implemented. This prevents build breakage when the
 	// go-fuse library adds new methods to the nodefs.File interface.
 	nodefs.File
+
+	db *metadb.DB
+
+	// closer is a callback that is called when this file has been closed for
+	// writing.
+	closer func()
 }
 
 func (f *WritableFile) InnerFile() nodefs.File {
@@ -53,7 +65,7 @@ func (f *WritableFile) SetInode(n *nodefs.Inode) {
 }
 
 func (f *WritableFile) String() string {
-	return fmt.Sprintf("WritableFile(%s)", f.fd.Name())
+	return fmt.Sprintf("WritableFile(%s)", f.Name)
 }
 
 func (f *WritableFile) Read(buf []byte, off int64) (res fuse.ReadResult, code fuse.Status) {
@@ -73,15 +85,35 @@ func (f *WritableFile) Write(data []byte, off int64) (uint32, fuse.Status) {
 }
 
 func (f *WritableFile) Release() {
+	log.Printf("stat")
+	info, err := f.fd.Stat()
+	log.Printf("stat: %v", info)
+
+	name := f.fd.Name()
+
+	if err != nil {
+		log.Printf("error stating file %s: %v", name, err)
+	}
+
 	f.lock.Lock()
 	f.fd.Close()
 	f.lock.Unlock()
 
 	// Now attempt to upload the file.
-	err := f.syncer.EnqueueFile(f.Id, f.fd.Name())
+	log.Printf("EnqueueFile")
+	err = f.syncer.EnqueueFile(f.Id, name)
 	if err != nil {
-		log.Printf("error enqueuing file %s for upload: %v", f.fd.Name(), err)
+		log.Printf("error enqueuing file %s for upload: %v", name, err)
 	}
+
+	log.Printf("SetSize %s %d", f.Name, info.Size())
+	err = f.db.SetSize(f.Name, uint64(info.Size()))
+	if err != nil {
+		log.Printf("error setting size for file %s: %v", name, err)
+	}
+
+	// Unlock the file for writing.
+	f.closer()
 }
 
 func (f *WritableFile) Flush() fuse.Status {

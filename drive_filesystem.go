@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/rand"
 	"fmt"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/hanwen/go-fuse/fuse/nodefs"
 	"github.com/hanwen/go-fuse/fuse/pathfs"
@@ -16,6 +15,7 @@ import (
 	"log"
 	"math"
 	"strings"
+	"sync"
 	"syscall"
 )
 
@@ -32,6 +32,11 @@ type DriveFileSystem struct {
 
 	// syncer provides a way to asynchronously upload files to a backing store.
 	syncer *Syncer
+
+	// writeLocks is a set of paths that are locked for writing, i.e. they are
+	// already open for writing, so should reject further writers.
+	writeLocks map[string]struct{}
+	writeLocksMut sync.Mutex
 }
 
 func NewDriveFileSystem(api *DriveApi, db *metadb.DB, syncer *Syncer) pathfs.FileSystem {
@@ -42,6 +47,7 @@ func NewDriveFileSystem(api *DriveApi, db *metadb.DB, syncer *Syncer) pathfs.Fil
 		driveApi:   api,
 		db:         db,
 		syncer:     syncer,
+		writeLocks: make(map[string]struct{}),
 	}
 }
 
@@ -77,7 +83,7 @@ func toFuseAttributes(attributes metadb.Attributes, out *fuse.Attr) {
 
 func (fs *DriveFileSystem) GetAttr(name string, context *fuse.Context) (
 	*fuse.Attr, fuse.Status) {
-	log.Printf("GetAttr \"%s\"", name)
+	//log.Printf("GetAttr \"%s\"", name)
 
 	// The mount point.
 	if name == "" {
@@ -163,6 +169,10 @@ func PrintFlags(flags uint32) string {
 	return strings.Join(out, ",")
 }
 
+// Open a file for reading and/or writing. In order to keep everything
+// consistent if a file is already open for writing then nobody else may read or
+// write to it. If a reader has the file open and a writer modifies the file,
+// the reader might not see the changes immediately.
 func (fs *DriveFileSystem) Open(name string, flags uint32,
 	context *fuse.Context) (fuseFile nodefs.File, status fuse.Status) {
 	log.Printf("Open \"%s\" (%s)", name, PrintFlags(flags))
@@ -181,13 +191,25 @@ func (fs *DriveFileSystem) Open(name string, flags uint32,
 		return NewDbFile(fs.db, name), fuse.OK
 	}
 
-	// TODO(simon): We need to determine if the local copy is the up-to-date
-	//  version and return that if so.
-
 	// If we're opening this file read only then we don't need to download the
 	// entire file first.
 	accessMode := flags & syscall.O_ACCMODE
+
+	// Check if this file is already open for writing, if so disallow open.
+	fs.writeLocksMut.Lock()
+	_, locked := fs.writeLocks[name]
+	if locked {
+		log.Printf("File %s is already open for writing.", name)
+		fs.writeLocksMut.Unlock()
+		return nil, fuse.EBUSY
+	}
+	if accessMode != syscall.O_RDONLY {
+		fs.writeLocks[name] = struct{}{}
+	}
+	fs.writeLocksMut.Unlock()
+
 	if accessMode == syscall.O_RDONLY {
+		log.Printf("Opening %s in read-only mode.", name)
 		driveFile := NewDriveFile(fs.driveApi, fs.db, DriveApiFile{
 			Name: name,
 			Id:   attributes.Id,
@@ -201,6 +223,8 @@ func (fs *DriveFileSystem) Open(name string, flags uint32,
 			File:      driveFile,
 		}, fuse.OK
 	} else {
+		log.Printf("Opening %s in writable mode.", name)
+
 		// Pull this file from the backing store.
 		tmpFile, err := ioutil.TempFile("", attributes.Id)
 		if err != nil {
@@ -208,16 +232,30 @@ func (fs *DriveFileSystem) Open(name string, flags uint32,
 			return nil, fuse.EIO
 		}
 
+		log.Printf("Reading file %s (%s) from backing store", name,
+			attributes.Id)
 		reader := NewFileReader(fs.driveApi, attributes.Id, attributes.Size, 0,
 			true)
 		n, err := io.Copy(tmpFile, reader)
-		if uint64(n) != attributes.Size {
-			panic(fmt.Sprintf(
-				"Wrote %d bytes, but file metadata expected %d bytes.", n,
-				attributes.Size))
+		if err != nil {
+			log.Printf("Error fetching file %s from backing store: %v", name,
+				err)
+			return nil, fuse.EIO
 		}
 
-		return NewWritableFile(tmpFile, attributes.Id, fs.syncer), fuse.ENOSYS
+		if uint64(n) != attributes.Size {
+			panic(fmt.Sprintf("Wrote %d bytes for file %s, but file metadata " +
+				"expected %d bytes.", n, name, attributes.Size))
+		}
+
+		deleteLock := func() {
+			fs.writeLocksMut.Lock()
+			delete(fs.writeLocks, name)
+			fs.writeLocksMut.Unlock()
+		}
+
+		return NewWritableFile(tmpFile, attributes.Id, name, fs.syncer, fs.db,
+			deleteLock), fuse.OK
 	}
 }
 
@@ -277,6 +315,8 @@ func (fs *DriveFileSystem) Rename(oldName string, newName string,
 
 func (fs *DriveFileSystem) Create(name string, flags uint32, mode uint32,
 	context *fuse.Context) (file nodefs.File, code fuse.Status) {
+	log.Printf("Create \"%s\" (%s)", name, PrintFlags(flags))
+
 	// Allow certain files to be stored in the database.
 	if strings.HasSuffix(name, "gocryptfs.diriv") {
 		log.Printf("Creating file in database \"%s\"", name)
@@ -292,38 +332,32 @@ func (fs *DriveFileSystem) Create(name string, flags uint32, mode uint32,
 			log.Printf("failed to create database file %s: %v", name, err)
 			return nil, fuse.EIO
 		}
-		return NewDbFile(fs.db, name), fuse.OK
+	} else {
+		log.Printf("Creating file on remote \"%s\"", name)
+
+		newFile := &drive.File{
+			Name: name,
+		}
+
+		f, err := fs.driveApi.Service.Files.Create(newFile).Do()
+		if err != nil {
+			log.Printf("failed to create file: %v", err)
+			return nil, fuse.EIO
+		}
+
+		err = fs.db.SetAttributes(name, metadb.Attributes{
+			Id:            f.Id,
+			Size:          0,
+			Mode:          mode,
+			IsRegularFile: true,
+		})
+		if err != nil {
+			log.Printf("failed to create file %s: %v", name, err)
+			return nil, fuse.EIO
+		}
 	}
 
-	log.Printf("Creating file on remote \"%s\"", name)
-
-	newFile := &drive.File{
-		Name: name,
-	}
-
-	f, err := fs.driveApi.Service.Files.Create(newFile).Do()
-	if err != nil {
-		log.Printf("failed to create file: %v", err)
-		return nil, fuse.EIO
-	}
-
-	err = fs.db.SetAttributes(name, metadb.Attributes{
-		Id:            f.Id,
-		Size:          0,
-		Mode:          mode,
-		IsRegularFile: true,
-	})
-	if err != nil {
-		log.Printf("failed to create file %s: %v", name, err)
-		return nil, fuse.EIO
-	}
-
-	log.Printf("Created file: %s", spew.Sdump(f))
-
-	return NewDriveFile(fs.driveApi, fs.db, DriveApiFile{
-		Name: f.Name,
-		Id:   f.Id,
-	}), fuse.OK
+	return fs.Open(name, flags, context)
 }
 
 func (fs *DriveFileSystem) Unlink(name string, context *fuse.Context) (
