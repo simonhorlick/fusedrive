@@ -123,9 +123,42 @@ func (fs *DriveFileSystem) OpenDir(name string, context *fuse.Context) (
 	return output, fuse.OK
 }
 
+// PrintFlags returns a string containing the names of the flags set in flags.
+func PrintFlags(flags uint32) string {
+	var out []string
+	if flags&syscall.O_RDONLY != 0 {
+		out = append(out, "O_RDONLY")
+	}
+	if flags&syscall.O_WRONLY != 0 {
+		out = append(out, "O_WRONLY")
+	}
+	if flags&syscall.O_RDWR != 0 {
+		out = append(out, "O_RDWR")
+	}
+	if flags&syscall.O_APPEND != 0 {
+		out = append(out, "O_APPEND")
+	}
+	if flags&syscall.O_CREAT != 0 {
+		out = append(out, "O_CREAT")
+	}
+	if flags&syscall.O_EXCL != 0 {
+		out = append(out, "O_EXCL")
+	}
+	if flags&syscall.O_TRUNC != 0 {
+		out = append(out, "O_TRUNC")
+	}
+	if flags&syscall.O_NONBLOCK != 0 {
+		out = append(out, "O_NONBLOCK")
+	}
+	if flags&syscall.O_SYNC != 0 {
+		out = append(out, "O_SYNC")
+	}
+	return strings.Join(out, ",")
+}
+
 func (fs *DriveFileSystem) Open(name string, flags uint32,
 	context *fuse.Context) (fuseFile nodefs.File, status fuse.Status) {
-	log.Printf("Open \"%s\"", name)
+	log.Printf("Open \"%s\" (%s)", name, PrintFlags(flags))
 
 	attributes, err := fs.db.GetAttributes(name)
 
