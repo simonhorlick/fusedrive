@@ -104,6 +104,7 @@ func (f *DriveFile) Read(buf []byte, off int64) (res fuse.ReadResult, code fuse.
 			off, f.readerPosition)
 		_ = f.reader.Close()
 		f.reader = api.NewFileReader(f.driveApi, f.Id, f.Size, uint64(off), false)
+		f.readerPosition = off
 	}
 
 	remaining := f.Size - uint64(f.readerPosition)
