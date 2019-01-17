@@ -1,7 +1,7 @@
 #
 # docker build -t fusedrive .
 #
-# docker run -it --device /dev/fuse --cap-add SYS_ADMIN -v /media/drive:/media/drive:shared -v /home/core/fusedrive:/var/fusedrive fusedrive
+# docker run -it --device /dev/fuse --cap-add SYS_ADMIN -v /mnt/rawdrive:/mnt/rawdrive:shared -v /home/core/fusedrive:/var/fusedrive fusedrive
 #
 #
 FROM golang:1.11-stretch as builder
