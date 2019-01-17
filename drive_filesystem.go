@@ -12,6 +12,7 @@ import (
 	"google.golang.org/api/drive/v3"
 	"log"
 	"math"
+	"strings"
 	"syscall"
 )
 
@@ -135,6 +136,11 @@ func (fs *DriveFileSystem) Open(name string, flags uint32,
 		return nil, fuse.ENODATA
 	}
 
+	// If this file is stored in the db, then handle it appropriately.
+	if attributes.HasContent {
+		return NewDbFile(fs.db, name), fuse.OK
+	}
+
 	driveFile := NewDriveFile(fs.driveApi, fs.db, DriveApiFile{
 		Name: name,
 		Id:   attributes.Id,
@@ -205,7 +211,25 @@ func (fs *DriveFileSystem) Rename(oldName string, newName string,
 
 func (fs *DriveFileSystem) Create(name string, flags uint32, mode uint32,
 	context *fuse.Context) (file nodefs.File, code fuse.Status) {
-	log.Printf("Creating file \"%s\"", name)
+	// Allow certain files to be stored in the database.
+	if strings.HasSuffix(name, "gocryptfs.diriv") {
+		log.Printf("Creating file in database \"%s\"", name)
+
+		err := fs.db.SetAttributes(name, metadb.Attributes{
+			Id:            GenerateId(),
+			Size:          0,
+			Mode:          mode,
+			IsRegularFile: true,
+			HasContent:    true,
+		})
+		if err != nil {
+			log.Printf("failed to create database file %s: %v", name, err)
+			return nil, fuse.EIO
+		}
+		return NewDbFile(fs.db, name), fuse.OK
+	}
+
+	log.Printf("Creating file on remote \"%s\"", name)
 
 	newFile := &drive.File{
 		Name: name,

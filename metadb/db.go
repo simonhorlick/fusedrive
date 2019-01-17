@@ -22,6 +22,9 @@ var (
 	// pathsBucket maps absolute paths to attributes
 	pathsBucket = []byte("paths-bucket")
 
+	// contentBucket stores the file content for selected files
+	contentBucket = []byte("content-bucket")
+
 	DoesNotExist = errors.New("does not exist")
 
 	AlreadyExists = errors.New("already exists")
@@ -41,6 +44,9 @@ type Attributes struct {
 
 	// Mode is the
 	Mode uint32
+
+	// True if the file content is stored in the db.
+	HasContent bool
 }
 
 func serialiseAttributes(attributes Attributes) ([]byte, error) {
@@ -70,6 +76,9 @@ func writeAttributes(w io.Writer, attributes Attributes) error {
 	if err := binary.Write(w, binary.LittleEndian, attributes.Mode); err != nil {
 		return err
 	}
+	if err := binary.Write(w, binary.LittleEndian, attributes.HasContent); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -90,6 +99,9 @@ func readAttributes(r io.Reader) (Attributes, error) {
 		return attributes, err
 	}
 	if err := binary.Read(r, binary.LittleEndian, &attributes.Mode); err != nil {
+		return attributes, err
+	}
+	if err := binary.Read(r, binary.LittleEndian, &attributes.HasContent); err != nil {
 		return attributes, err
 	}
 
@@ -131,6 +143,10 @@ func createDB(dbPath string) error {
 
 	err = db.Update(func(tx *bolt.Tx) error {
 		if _, err := tx.CreateBucket(pathsBucket); err != nil {
+			return err
+		}
+
+		if _, err := tx.CreateBucket(contentBucket); err != nil {
 			return err
 		}
 
@@ -346,5 +362,33 @@ func (d *DB) Rename(oldName string, newName string) error {
 		}
 
 		return nil
+	})
+}
+
+func (d *DB) GetFile(path string) ([]byte, error) {
+	log.Printf("GetFile %s", path)
+	var content []byte
+	var err error
+	err = d.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(contentBucket)
+		v := b.Get(serialisePath(path))
+
+		content = make([]byte, len(v))
+		copy(content, v)
+
+		return err
+	})
+	if err != nil {
+		return content, err
+	}
+
+	return content, nil
+}
+
+func (d *DB) PutFile(path string, data []byte) error {
+	log.Printf("PutFile %s", path)
+	return d.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(contentBucket)
+		return b.Put(serialisePath(path), data)
 	})
 }

@@ -1,6 +1,7 @@
 package metadb
 
 import (
+	"bytes"
 	"io/ioutil"
 	"log"
 	"os"
@@ -220,5 +221,29 @@ func TestSetSize(t *testing.T) {
 
 	if actual.Size != 1234 {
 		t.Fatal("Failed to update size")
+	}
+}
+
+func TestPutFile(t *testing.T) {
+	dir, err := ioutil.TempDir("", "TestPutFile")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	db, err := Open(dir)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	content := []byte("file contents")
+	err = db.PutFile("path/to/file", content)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	actual, err := db.GetFile("path/to/file")
+	if !bytes.Equal(actual, content) {
+		t.Fatal("file contents do not match")
 	}
 }
