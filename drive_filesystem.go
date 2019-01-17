@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"fmt"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/hanwen/go-fuse/fuse/nodefs"
@@ -10,6 +11,8 @@ import (
 	"github.com/simonhorlick/fusedrive/metadb"
 	"github.com/simonhorlick/fusedrive/serialize_reads"
 	"google.golang.org/api/drive/v3"
+	"io"
+	"io/ioutil"
 	"log"
 	"math"
 	"strings"
@@ -25,16 +28,20 @@ type DriveFileSystem struct {
 	driveApi *DriveApi
 
 	// db is a database that stores all of the filesystem metadata.
-	db *metadb.DB
+	db     *metadb.DB
+
+	// syncer provides a way to asynchronously upload files to a backing store.
+	syncer *Syncer
 }
 
-func NewDriveFileSystem(api *DriveApi, db *metadb.DB) pathfs.FileSystem {
+func NewDriveFileSystem(api *DriveApi, db *metadb.DB, syncer *Syncer) pathfs.FileSystem {
 	log.Print("Creating DriveFileSystem")
 	serialize_reads.InitSerializer()
 	return &DriveFileSystem{
 		FileSystem: pathfs.NewDefaultFileSystem(),
 		driveApi:   api,
 		db:         db,
+		syncer:     syncer,
 	}
 }
 
@@ -174,18 +181,44 @@ func (fs *DriveFileSystem) Open(name string, flags uint32,
 		return NewDbFile(fs.db, name), fuse.OK
 	}
 
-	driveFile := NewDriveFile(fs.driveApi, fs.db, DriveApiFile{
-		Name: name,
-		Id:   attributes.Id,
-		Size: attributes.Size,
-	})
+	// TODO(simon): We need to determine if the local copy is the up-to-date
+	//  version and return that if so.
 
-	return &nodefs.WithFlags{
-		// Disable kernel page cache. This option prevents the kernel from
-		// requesting reads non-sequentially.
-		FuseFlags: fuse.FOPEN_DIRECT_IO,
-		File:      driveFile,
-	}, fuse.OK
+	// If we're opening this file read only then we don't need to download the
+	// entire file first.
+	accessMode := flags & syscall.O_ACCMODE
+	if accessMode == syscall.O_RDONLY {
+		driveFile := NewDriveFile(fs.driveApi, fs.db, DriveApiFile{
+			Name: name,
+			Id:   attributes.Id,
+			Size: attributes.Size,
+		})
+
+		return &nodefs.WithFlags{
+			// Disable kernel page cache. This option prevents the kernel from
+			// requesting reads non-sequentially.
+			FuseFlags: fuse.FOPEN_DIRECT_IO,
+			File:      driveFile,
+		}, fuse.OK
+	} else {
+		// Pull this file from the backing store.
+		tmpFile, err := ioutil.TempFile("", attributes.Id)
+		if err != nil {
+			log.Printf("error opening temporary file: %v", err)
+			return nil, fuse.EIO
+		}
+
+		reader := NewFileReader(fs.driveApi, attributes.Id, attributes.Size, 0,
+			true)
+		n, err := io.Copy(tmpFile, reader)
+		if uint64(n) != attributes.Size {
+			panic(fmt.Sprintf(
+				"Wrote %d bytes, but file metadata expected %d bytes.", n,
+				attributes.Size))
+		}
+
+		return NewWritableFile(tmpFile, attributes.Id, fs.syncer), fuse.ENOSYS
+	}
 }
 
 func RandomBytes() []byte {

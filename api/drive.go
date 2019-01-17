@@ -3,11 +3,13 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"path"
+	"time"
 
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
@@ -15,7 +17,15 @@ import (
 	"google.golang.org/api/drive/v3"
 )
 
-const credentialsFileName = "credentials.json"
+const (
+	// credentialsFileName is the filename where we expect to find a credentials
+	// file.
+	credentialsFileName = "credentials.json"
+
+	// binaryMimeType is the value of the MimeType attribute that is set on
+	// files uploaded to Google Drive.
+	binaryMimeType = "application/octet-stream"
+)
 
 type DriveApi struct {
 	Service *drive.Service
@@ -138,4 +148,23 @@ func (d *DriveApi) List() []DriveApiFile {
 	}
 
 	return files
+}
+
+func (d *DriveApi) Upload(id string, reader io.Reader) error {
+	request := d.Service.Files.Update(id, &drive.File{
+		MimeType: binaryMimeType,
+	})
+	request.Media(reader)
+
+	log.Printf("Uploading file %s", id)
+	start := time.Now()
+	file, err := request.Do()
+	if err != nil {
+		log.Printf("Error uploading file, err: %#v, %v", file, err)
+		return err
+	}
+	log.Printf("Uploaded file %s in %.03f seconds", id,
+		time.Since(start).Seconds())
+
+	return nil
 }

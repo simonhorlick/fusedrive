@@ -30,6 +30,13 @@ var (
 	AlreadyExists = errors.New("already exists")
 )
 
+type Upload struct {
+	// Id is the Google Drive id for this file
+	Id string
+	// Path is the path on the local filesystem where this file is located.
+	Path string
+}
+
 // Attributes describes a node on the filesystem.
 type Attributes struct {
 	// Id is the Google Drive id for this node.
@@ -416,4 +423,17 @@ func (d *DB) SetMode(path string, mode uint32) error {
 		}
 		return b.Put(k, newAttributes)
 	})
+}
+
+func (d *DB) RemoveFromUploadQueue(upload Upload) {
+	log.Printf("RemoveFromUploadQueue %s", upload.Path)
+}
+
+func (d *DB) AddToUploadQueue(upload Upload) error {
+	log.Printf("AddToUploadQueue %s", upload.Path)
+	return nil
+}
+
+func (d *DB) GetUploadQueue() []Upload {
+	return nil
 }

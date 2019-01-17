@@ -16,16 +16,12 @@ import (
 
 var _ nodefs.File = &DriveFile{} // Verify that interface is implemented.
 
-const binaryMimeType = "application/octet-stream"
-
 func NewDriveFile(driveApi *api.DriveApi, db *metadb.DB, file api.DriveApiFile) nodefs.File {
 	return &DriveFile{
 		driveApi:     driveApi,
 		File:         NewUnimplementedFile(),
 		DriveApiFile: file,
 		db:           db,
-		// Create a write buffer that has capacity for a single write.
-		dataBuffer: make([]byte, 0, fuse.MAX_KERNEL_WRITE),
 		lastReadData: make([]byte, 0, fuse.MAX_KERNEL_WRITE),
 	}
 }
@@ -53,9 +49,6 @@ type DriveFile struct {
 	// comes in for an offset that isn't equal to readerPosition we dispose of
 	// the reader and create a new one.
 	readerPosition int64
-
-	// dataBuffer buffers writes until Flush is called.
-	dataBuffer []byte
 
 	// os.File is not threadsafe. Although fd themselves are
 	// constant during the lifetime of an open file, the OS may
@@ -188,32 +181,8 @@ func (f *DriveFile) GetAttr(out *fuse.Attr) fuse.Status {
 
 func (f *DriveFile) Write(data []byte, off int64) (written uint32,
 	code fuse.Status) {
-	//log.Printf("Write (%s) %d bytes at offset %d", f.Name, len(data), off)
-
-	// We buffer writes in memory until the data is flushed.
-
-	// Check whether the buffer is large enough, if not expand it.
-	used := len(f.dataBuffer)
-	capacity := cap(f.dataBuffer)
-	//log.Printf("buffer: used %d/%d", used, capacity)
-
-	if capacity < int(off)+len(data) {
-		newCapacity := capacity * 2
-		//log.Printf("buffer: alloc %d/%d", used, newCapacity)
-
-		// Double the buffer size each time we need to reallocate.
-		t := make([]byte, used, newCapacity)
-		copy(t, f.dataBuffer)
-		f.dataBuffer = t[:used]
-	}
-
-	// Copy the chunk to the buffer.
-	copied := copy(f.dataBuffer[off:int(off)+len(data)], data)
-	f.dataBuffer = f.dataBuffer[0 : int(off)+len(data)]
-
-	//log.Printf("buffer: copied %d, used %d/%d", copied, len(f.dataBuffer), capacity)
-
-	return uint32(copied), fuse.OK
+	// This is a read-only file.
+	return 0, fuse.EPERM
 }
 
 // max returns the larger of the two arguments.
@@ -226,31 +195,6 @@ func max(a, b int) int {
 }
 
 func (f *DriveFile) Flush() fuse.Status {
-	if len(f.dataBuffer) == 0 {
-		log.Print("Flush nothing to do, no data buffered.")
-		return fuse.OK
-	}
-
-	// TODO(simon): Cache this locally and retry on failure.
-	request := f.driveApi.Service.Files.Update(f.Id, &drive.File{
-		MimeType: binaryMimeType,
-	})
-	request.Media(bytes.NewReader(f.dataBuffer))
-
-	log.Printf("Uploading file %d bytes", len(f.dataBuffer))
-	file, err := request.Do()
-	if err != nil {
-		log.Printf("Error uploading file, err: %#v, %v", file, err)
-		return fuse.EIO
-	}
-
-	err = f.db.SetSize(f.Name, uint64(len(f.dataBuffer)))
-	if err != nil {
-		log.Printf("error storing file metadata %s: %v", f.Name, err)
-		return fuse.EIO
-	}
-
-	log.Printf("Updated file, err: %#v, %v", file, err)
 	return fuse.OK
 }
 
