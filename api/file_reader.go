@@ -138,8 +138,8 @@ func (f *FileReader) Read(p []byte) (int, error) {
 		// Point p at the next available space in the buffer.
 		p = p[n:]
 
-		// Handle end of file for one chunk.
-		if err == io.EOF {
+		// We've exhausted this http response, so start another request.
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
 			log.Printf("EOF for http request")
 			closeErr := f.httpResponse.Close()
 			f.httpResponse = nil
