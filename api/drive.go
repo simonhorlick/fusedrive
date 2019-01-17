@@ -150,6 +150,8 @@ func (d *DriveApi) List() []DriveApiFile {
 	return files
 }
 
+// Upload replaces the contents of the file referenced by id with the data from
+// reader.
 func (d *DriveApi) Upload(id string, reader io.Reader) error {
 	request := d.Service.Files.Update(id, &drive.File{
 		MimeType: binaryMimeType,
