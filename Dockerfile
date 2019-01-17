@@ -10,9 +10,9 @@ MAINTAINER Simon Horlick <simonhorlick@gmail.com>
 
 WORKDIR $GOPATH/src/github.com/simonhorlick/fusedrive
 
-# Grab and install the latest version and all related dependencies.
-RUN git clone https://github.com/simonhorlick/fusedrive.git . \
-    &&  GO111MODULE=on go install -v .
+# Build from the sources in this directory.
+COPY . $GOPATH/src/github.com/simonhorlick/fusedrive
+RUN GO111MODULE=on go install -v .
 
 # Start a new image
 FROM debian:stretch as final
