@@ -26,6 +26,7 @@ func NewDriveFile(driveApi *api.DriveApi, db *metadb.DB, file api.DriveApiFile) 
 		db:           db,
 		// Create a write buffer that has capacity for a single write.
 		dataBuffer: make([]byte, 0, fuse.MAX_KERNEL_WRITE),
+		lastReadData: make([]byte, 0, fuse.MAX_KERNEL_WRITE),
 	}
 }
 
@@ -42,6 +43,11 @@ type DriveFile struct {
 	// requested. This helps with sequential reads where fuse requests many
 	// small chunks of data.
 	reader io.ReadCloser
+
+	// We cache the most recent read in memory in case we get more reads for
+	// this chunk in non-sequential order.
+	lastReadOffset int64
+	lastReadData []byte
 
 	// readerPosition is the current position of reader in the file. If a read
 	// comes in for an offset that isn't equal to readerPosition we dispose of
@@ -100,6 +106,19 @@ func (f *DriveFile) Read(buf []byte, off int64) (res fuse.ReadResult, code fuse.
 		f.reader = api.NewFileReader(f.driveApi, f.Id,
 			f.Size, uint64(off), true)
 	} else if f.readerPosition != off {
+		// If this is a re-read of the previously fetched chunk, then return
+		// that.
+		if off >= f.lastReadOffset && off < f.lastReadOffset + int64(len(f.lastReadData)) {
+			offsetInLastRead := off - f.lastReadOffset
+
+			n := copy(buf, f.lastReadData[offsetInLastRead:])
+
+			log.Printf("Returning %d bytes [%d, %d] from last read", n, off,
+				int64(n)+off-1)
+
+			return fuse.ReadResultData(buf[:n]), fuse.OK
+		}
+
 		log.Printf("DriveFile Non-sequential read at offset %d, reader is currently at %d",
 			off, f.readerPosition)
 		_ = f.reader.Close()
@@ -113,6 +132,13 @@ func (f *DriveFile) Read(buf []byte, off int64) (res fuse.ReadResult, code fuse.
 	// read as much data as there is remaining. Otherwise just fill buf.
 	n, err := io.ReadAtLeast(f.reader, buf, min(int(remaining), len(buf)))
 	f.readerPosition += int64(n)
+
+	log.Printf("Returning %d bytes [%d, %d], next byte is at %d", n, off,
+		int64(n)+off-1, f.readerPosition)
+
+	f.lastReadOffset = off
+	copy(f.lastReadData[:n], buf[:n])
+	f.lastReadData = f.lastReadData[:n]
 
 	if err == io.EOF {
 		log.Printf("DriveFile received EOF")
