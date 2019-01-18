@@ -79,7 +79,7 @@ func (f *DriveFile) String() string {
 // calls to Read will be sequential, so we can continue taking data from the
 // Reader and advancing it each time.
 func (f *DriveFile) Read(buf []byte, off int64) (res fuse.ReadResult, code fuse.Status) {
-	log.Printf("DriveFile Read request for %s at offset %d bufsize %d", f.Name, off, len(buf))
+	log.Printf("Read for %s at offset %d bufsize %d", f.Name, off, len(buf))
 
 	// Read requests can arrive out of order, which kills sequential read
 	// performance. Attempt to re-order them by waiting to see what other

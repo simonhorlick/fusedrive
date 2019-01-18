@@ -39,10 +39,7 @@ func main() {
 	}
 	defer db.Close()
 
-	syncer := api.NewSyncer(db, driveApi)
-	go syncer.Start()
-
-	pathFs := pathfs.NewPathNodeFs(NewDriveFileSystem(driveApi, db, syncer),
+	pathFs := pathfs.NewPathNodeFs(NewDriveFileSystem(driveApi, db),
 		&pathfs.PathNodeFsOptions{})
 	conn := nodefs.NewFileSystemConnector(pathFs.Root(), opts)
 	mountPoint := flag.Arg(0)

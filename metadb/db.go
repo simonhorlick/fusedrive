@@ -435,3 +435,28 @@ func (d *DB) AddToUploadQueue(upload Upload) error {
 func (d *DB) GetUploadQueue() []Upload {
 	return nil
 }
+
+func (d *DB) SetId(path, id string) error {
+	log.Printf("SetId %s: %s", path, id)
+	return d.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(pathsBucket)
+		k := serialisePath(path)
+		v := b.Get(k)
+		if v == nil {
+			return DoesNotExist
+		}
+
+		attributes, err := readAttributes(bytes.NewReader(v))
+		if err != nil {
+			return err
+		}
+
+		attributes.Id = id
+
+		newAttributes, err := serialiseAttributes(attributes)
+		if err != nil {
+			return err
+		}
+		return b.Put(k, newAttributes)
+	})
+}

@@ -1,53 +1,42 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
-	"fmt"
 	"github.com/hanwen/go-fuse/fuse"
 	"github.com/hanwen/go-fuse/fuse/nodefs"
 	"github.com/hanwen/go-fuse/fuse/pathfs"
 	. "github.com/simonhorlick/fusedrive/api"
 	"github.com/simonhorlick/fusedrive/metadb"
-	"github.com/simonhorlick/fusedrive/serialize_reads"
-	"google.golang.org/api/drive/v3"
-	"io"
-	"io/ioutil"
 	"log"
 	"math"
 	"strings"
-	"sync"
 	"syscall"
 )
 
 // Verify that interface is implemented.
 var _ pathfs.FileSystem = &DriveFileSystem{}
 
+var EmptyId = string(bytes.Repeat([]byte{0x00}, 33))
+
 // DriveFileSystem exposes the Google Drive api as a fuse filesystem.
 type DriveFileSystem struct {
 	pathfs.FileSystem
 	driveApi *DriveApi
 
+	localFileCache *LocalFileCache
+
 	// db is a database that stores all of the filesystem metadata.
 	db *metadb.DB
-
-	// syncer provides a way to asynchronously upload files to a backing store.
-	syncer *Syncer
-
-	// writeLocks is a set of paths that are locked for writing, i.e. they are
-	// already open for writing, so should reject further writers.
-	writeLocks    map[string]struct{}
-	writeLocksMut sync.Mutex
 }
 
-func NewDriveFileSystem(api *DriveApi, db *metadb.DB, syncer *Syncer) pathfs.FileSystem {
+func NewDriveFileSystem(api *DriveApi, db *metadb.DB) pathfs.FileSystem {
 	log.Print("Creating DriveFileSystem")
-	serialize_reads.InitSerializer()
 	return &DriveFileSystem{
 		FileSystem: pathfs.NewDefaultFileSystem(),
 		driveApi:   api,
 		db:         db,
-		syncer:     syncer,
-		writeLocks: make(map[string]struct{}),
+		localFileCache: NewLocalFileCache(api, db),
 	}
 }
 
@@ -83,8 +72,6 @@ func toFuseAttributes(attributes metadb.Attributes, out *fuse.Attr) {
 
 func (fs *DriveFileSystem) GetAttr(name string, context *fuse.Context) (
 	*fuse.Attr, fuse.Status) {
-	//log.Printf("GetAttr \"%s\"", name)
-
 	// The mount point.
 	if name == "" {
 		return &fuse.Attr{Mode: fuse.S_IFDIR | 0755}, fuse.OK
@@ -139,13 +126,13 @@ func (fs *DriveFileSystem) OpenDir(name string, context *fuse.Context) (
 // PrintFlags returns a string containing the names of the flags set in flags.
 func PrintFlags(flags uint32) string {
 	var out []string
-	if flags&syscall.O_RDONLY != 0 {
+	if flags&syscall.O_ACCMODE == syscall.O_RDONLY {
 		out = append(out, "O_RDONLY")
 	}
-	if flags&syscall.O_WRONLY != 0 {
+	if flags&syscall.O_ACCMODE == syscall.O_WRONLY {
 		out = append(out, "O_WRONLY")
 	}
-	if flags&syscall.O_RDWR != 0 {
+	if flags&syscall.O_ACCMODE == syscall.O_RDWR {
 		out = append(out, "O_RDWR")
 	}
 	if flags&syscall.O_APPEND != 0 {
@@ -169,10 +156,8 @@ func PrintFlags(flags uint32) string {
 	return strings.Join(out, ",")
 }
 
-// Open a file for reading and/or writing. In order to keep everything
-// consistent if a file is already open for writing then nobody else may read or
-// write to it. If a reader has the file open and a writer modifies the file,
-// the reader might not see the changes immediately.
+// Open a file for reading and/or writing. We keep a reference count of the
+// number of clients for each file.
 func (fs *DriveFileSystem) Open(name string, flags uint32,
 	context *fuse.Context) (fuseFile nodefs.File, status fuse.Status) {
 	log.Printf("Open \"%s\" (%s)", name, PrintFlags(flags))
@@ -194,69 +179,9 @@ func (fs *DriveFileSystem) Open(name string, flags uint32,
 	// If we're opening this file read only then we don't need to download the
 	// entire file first.
 	accessMode := flags & syscall.O_ACCMODE
+	readOnly := accessMode == syscall.O_RDONLY
 
-	// Check if this file is already open for writing, if so disallow open.
-	fs.writeLocksMut.Lock()
-	_, locked := fs.writeLocks[name]
-	if locked {
-		log.Printf("File %s is already open for writing.", name)
-		fs.writeLocksMut.Unlock()
-		return nil, fuse.EBUSY
-	}
-	if accessMode != syscall.O_RDONLY {
-		fs.writeLocks[name] = struct{}{}
-	}
-	fs.writeLocksMut.Unlock()
-
-	if accessMode == syscall.O_RDONLY {
-		log.Printf("Opening %s in read-only mode.", name)
-		driveFile := NewDriveFile(fs.driveApi, fs.db, DriveApiFile{
-			Name: name,
-			Id:   attributes.Id,
-			Size: attributes.Size,
-		})
-
-		return &nodefs.WithFlags{
-			// Disable kernel page cache. This option prevents the kernel from
-			// requesting reads non-sequentially.
-			FuseFlags: fuse.FOPEN_DIRECT_IO,
-			File:      driveFile,
-		}, fuse.OK
-	} else {
-		log.Printf("Opening %s in writable mode.", name)
-
-		// Pull this file from the backing store.
-		tmpFile, err := ioutil.TempFile("", attributes.Id)
-		if err != nil {
-			log.Printf("error opening temporary file: %v", err)
-			return nil, fuse.EIO
-		}
-
-		log.Printf("Reading file %s (%s) from backing store", name,
-			attributes.Id)
-		reader := NewFileReader(fs.driveApi, attributes.Id, attributes.Size, 0,
-			true)
-		n, err := io.Copy(tmpFile, reader)
-		if err != nil {
-			log.Printf("Error fetching file %s from backing store: %v", name,
-				err)
-			return nil, fuse.EIO
-		}
-
-		if uint64(n) != attributes.Size {
-			panic(fmt.Sprintf("Wrote %d bytes for file %s, but file metadata "+
-				"expected %d bytes.", n, name, attributes.Size))
-		}
-
-		deleteLock := func() {
-			fs.writeLocksMut.Lock()
-			delete(fs.writeLocks, name)
-			fs.writeLocksMut.Unlock()
-		}
-
-		return NewWritableFile(tmpFile, attributes.Id, name, fs.syncer, fs.db,
-			deleteLock), fuse.OK
-	}
+	return fs.localFileCache.Open(name, attributes.Id, readOnly), fuse.OK
 }
 
 func RandomBytes() []byte {
@@ -316,6 +241,12 @@ func (fs *DriveFileSystem) Create(name string, flags uint32, mode uint32,
 	context *fuse.Context) (file nodefs.File, code fuse.Status) {
 	log.Printf("Create \"%s\" (%s)", name, PrintFlags(flags))
 
+	// Ensure the file doesn't already exist.
+	_, err := fs.db.GetAttributes(name)
+	if err != metadb.DoesNotExist {
+		return nil, fuse.EINVAL
+	}
+
 	// Allow certain files to be stored in the database.
 	if strings.HasSuffix(name, "gocryptfs.diriv") {
 		log.Printf("Creating file in database \"%s\"", name)
@@ -331,32 +262,24 @@ func (fs *DriveFileSystem) Create(name string, flags uint32, mode uint32,
 			log.Printf("failed to create database file %s: %v", name, err)
 			return nil, fuse.EIO
 		}
+
+		return fs.Open(name, flags, context)
 	} else {
-		log.Printf("Creating file on remote \"%s\"", name)
-
-		newFile := &drive.File{
-			Name: name,
-		}
-
-		f, err := fs.driveApi.Service.Files.Create(newFile).Do()
-		if err != nil {
-			log.Printf("failed to create file: %v", err)
-			return nil, fuse.EIO
-		}
-
-		err = fs.db.SetAttributes(name, metadb.Attributes{
-			Id:            f.Id,
+		err := fs.db.SetAttributes(name, metadb.Attributes{
+			// Empty id signals that the file needs to be created on the remote.
+			Id:            EmptyId,
 			Size:          0,
 			Mode:          mode,
 			IsRegularFile: true,
+			HasContent:    false,
 		})
 		if err != nil {
-			log.Printf("failed to create file %s: %v", name, err)
+			log.Printf("failed to create attributes for file %s: %v", name, err)
 			return nil, fuse.EIO
 		}
-	}
 
-	return fs.Open(name, flags, context)
+		return fs.localFileCache.Open(name, EmptyId, false), fuse.OK
+	}
 }
 
 func (fs *DriveFileSystem) Unlink(name string, context *fuse.Context) (
