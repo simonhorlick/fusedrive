@@ -43,7 +43,7 @@ type DriveFile struct {
 	// We cache the most recent read in memory in case we get more reads for
 	// this chunk in non-sequential order.
 	lastReadOffset int64
-	lastReadData []byte
+	lastReadData   []byte
 
 	// readerPosition is the current position of reader in the file. If a read
 	// comes in for an offset that isn't equal to readerPosition we dispose of
@@ -101,7 +101,7 @@ func (f *DriveFile) Read(buf []byte, off int64) (res fuse.ReadResult, code fuse.
 	} else if f.readerPosition != off {
 		// If this is a re-read of the previously fetched chunk, then return
 		// that.
-		if off >= f.lastReadOffset && off < f.lastReadOffset + int64(len(f.lastReadData)) {
+		if off >= f.lastReadOffset && off < f.lastReadOffset+int64(len(f.lastReadData)) {
 			offsetInLastRead := off - f.lastReadOffset
 
 			n := copy(buf, f.lastReadData[offsetInLastRead:])

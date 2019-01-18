@@ -16,23 +16,21 @@ const expectedBytes = 134217728
 
 const defaultReadSize = 16 * 1024 * 1024
 
-
 // FileReader is an io.Reader that reads a file from Google Drive sequentially.
 type FileReader2 struct {
 	driveApi *api.DriveApi
-	id string
+	id       string
 
 	// The position of this reader within the file.
 	position int64
 
 	httpResponse io.ReadCloser
-
 }
 
 func NewFileReader2(driveApi *api.DriveApi, id string, position int64) *FileReader2 {
 	return &FileReader2{
 		driveApi: driveApi,
-		id: id,
+		id:       id,
 		position: position,
 	}
 }
@@ -142,10 +140,10 @@ func serial(drive *api.DriveApi) {
 
 	mbits := (float64(written) * 8.0) / (1024.0 * 1024.0)
 
-	log.Printf("serial: Copied %d bytes with error %v." +
-		" Took %s at %0.2f mbit/s." +
+	log.Printf("serial: Copied %d bytes with error %v."+
+		" Took %s at %0.2f mbit/s."+
 		" TTFB was %s",
-		written, err, elapsed, mbits / elapsed.Seconds(), ttfbLogger.Ttfb)
+		written, err, elapsed, mbits/elapsed.Seconds(), ttfbLogger.Ttfb)
 }
 
 func serialStreaming(drive *api.DriveApi) {
@@ -168,10 +166,10 @@ func serialStreaming(drive *api.DriveApi) {
 
 	mbits := (float64(written) * 8.0) / (1024.0 * 1024.0)
 
-	log.Printf("serial: Copied %d bytes with error %v." +
-		" Took %s at %0.2f mbit/s." +
+	log.Printf("serial: Copied %d bytes with error %v."+
+		" Took %s at %0.2f mbit/s."+
 		" TTFB was %s",
-		written, err, elapsed, mbits / elapsed.Seconds(), ttfbLogger.Ttfb)
+		written, err, elapsed, mbits/elapsed.Seconds(), ttfbLogger.Ttfb)
 }
 
 type ChunkReader struct {
@@ -212,7 +210,7 @@ func parallel(drive *api.DriveApi) {
 				}
 
 				// Request next chunk if there is one.
-				if offset + defaultReadSize < expectedBytes {
+				if offset+defaultReadSize < expectedBytes {
 					start := offset + defaultReadSize
 					log.Printf("Requesting chunk beginning at %d", start)
 					c <- start

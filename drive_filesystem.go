@@ -28,14 +28,14 @@ type DriveFileSystem struct {
 	driveApi *DriveApi
 
 	// db is a database that stores all of the filesystem metadata.
-	db     *metadb.DB
+	db *metadb.DB
 
 	// syncer provides a way to asynchronously upload files to a backing store.
 	syncer *Syncer
 
 	// writeLocks is a set of paths that are locked for writing, i.e. they are
 	// already open for writing, so should reject further writers.
-	writeLocks map[string]struct{}
+	writeLocks    map[string]struct{}
 	writeLocksMut sync.Mutex
 }
 
@@ -244,7 +244,7 @@ func (fs *DriveFileSystem) Open(name string, flags uint32,
 		}
 
 		if uint64(n) != attributes.Size {
-			panic(fmt.Sprintf("Wrote %d bytes for file %s, but file metadata " +
+			panic(fmt.Sprintf("Wrote %d bytes for file %s, but file metadata "+
 				"expected %d bytes.", n, name, attributes.Size))
 		}
 
@@ -311,7 +311,6 @@ func (fs *DriveFileSystem) Rename(oldName string, newName string,
 
 	return fuse.OK
 }
-
 
 func (fs *DriveFileSystem) Create(name string, flags uint32, mode uint32,
 	context *fuse.Context) (file nodefs.File, code fuse.Status) {

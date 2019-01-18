@@ -31,7 +31,7 @@ var _ io.ReadCloser = &FileReader{} // Verify that interface is implemented.
 // This is NOT thread safe.
 type FileReader struct {
 	driveApi *DriveApi
-	id string
+	id       string
 
 	// The position of this reader within the file.
 	position uint64
@@ -60,9 +60,9 @@ func NewFileReader(driveApi *DriveApi, id string, length, position uint64,
 
 	return &FileReader{
 		driveApi: driveApi,
-		id: id,
+		id:       id,
 		position: position,
-		length: length,
+		length:   length,
 		readSize: readSize,
 	}
 }

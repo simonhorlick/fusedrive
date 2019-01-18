@@ -39,7 +39,7 @@ type DriveApiFile struct {
 	Name string
 
 	// The Google Drive id of this file.
-	Id   string
+	Id string
 
 	// The size of this file in bytes.
 	Size uint64
@@ -198,7 +198,7 @@ func (d *DriveApi) Update(id string, reader io.Reader) error {
 // ReadAt returns the content of the file in the given range with the given
 // id.
 func (d *DriveApi) ReadAt(id string, size uint64, off uint64) (io.ReadCloser,
-       error) {
+	error) {
 	if size == 0 {
 		log.Printf("error: Attempted zero byte read")
 		return nil, nil

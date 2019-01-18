@@ -9,7 +9,7 @@ var _ io.ReadCloser = &ZeroReader{} // Verify that interface is implemented.
 // ZeroReader is an io.Reader that returns zeros.
 type ZeroReader struct {
 	driveApi *DriveApi
-	id string
+	id       string
 
 	// The position of this reader within the file.
 	position int64
@@ -21,9 +21,9 @@ type ZeroReader struct {
 func NewZeroReader(driveApi *DriveApi, id string, length, position int64) *ZeroReader {
 	return &ZeroReader{
 		driveApi: driveApi,
-		id: id,
+		id:       id,
 		position: position,
-		length: length,
+		length:   length,
 	}
 }
 

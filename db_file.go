@@ -13,8 +13,8 @@ var _ nodefs.File = &DbFile{} // Verify that interface is implemented.
 
 func NewDbFile(db *metadb.DB, name string) nodefs.File {
 	return &DbFile{
-		File:         NewUnimplementedFile(),
-		db:           db,
+		File: NewUnimplementedFile(),
+		db:   db,
 		Name: name,
 	}
 }
@@ -90,8 +90,8 @@ func (f *DbFile) Write(data []byte, off int64) (written uint32,
 		return 0, fuse.EIO
 	}
 
-	if len(content) < int(off) + len(data) {
-		t := make([]byte, int(off) + len(data))
+	if len(content) < int(off)+len(data) {
+		t := make([]byte, int(off)+len(data))
 		copy(t, content)
 		content = t
 	}

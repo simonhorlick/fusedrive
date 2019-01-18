@@ -16,13 +16,13 @@ import (
 func NewWritableFile(f *os.File, id, name string, syncer *api.Syncer,
 	db *metadb.DB, closer func()) nodefs.File {
 	return &WritableFile{
-		fd: f,
-		File: NewUnimplementedFile(),
-		Id: id,
-		Name: name,
+		fd:     f,
+		File:   NewUnimplementedFile(),
+		Id:     id,
+		Name:   name,
 		syncer: syncer,
 		closer: closer,
-		db: db,
+		db:     db,
 	}
 }
 

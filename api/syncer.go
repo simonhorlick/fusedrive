@@ -31,9 +31,9 @@ func NewSyncer(db *metadb.DB, remote Remote) *Syncer {
 	}
 
 	return &Syncer{
-		db:	   db,
-		queue: uploadQueue,
-		quit:  make(chan interface{}),
+		db:     db,
+		queue:  uploadQueue,
+		quit:   make(chan interface{}),
 		remote: remote,
 	}
 }
@@ -44,7 +44,7 @@ func (s *Syncer) Start() error {
 
 	for {
 		select {
-		case <- s.quit:
+		case <-s.quit:
 			log.Printf("Shutting down syncer")
 			return nil
 		case upload := <-s.queue:

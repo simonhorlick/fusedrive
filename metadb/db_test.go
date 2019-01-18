@@ -39,10 +39,10 @@ func TestSetAttributes(t *testing.T) {
 	}
 
 	attributes := Attributes{
-		Id: "1kgcI9l0qzeB8LtmUd0RxTO_hjQYbdjoo",
-		Size: 104857600,
+		Id:            "1kgcI9l0qzeB8LtmUd0RxTO_hjQYbdjoo",
+		Size:          104857600,
 		IsRegularFile: true,
-		Mode: 0644,
+		Mode:          0644,
 	}
 
 	err = db.SetAttributes("path/to/file", attributes)
@@ -83,16 +83,16 @@ func TestListRootDirectory(t *testing.T) {
 	}
 
 	attributes := Attributes{
-		Id: "1kgcI9l0qzeB8LtmUd0RxTO_hjQYbdjoo",
-		Size: 104857600,
+		Id:            "1kgcI9l0qzeB8LtmUd0RxTO_hjQYbdjoo",
+		Size:          104857600,
 		IsRegularFile: true,
-		Mode: 0644,
+		Mode:          0644,
 	}
 	attributes2 := Attributes{
-		Id: "1vBQErMm1EY6M1Ur2C8XfrGapB6nUq1LO",
-		Size: 104857600,
+		Id:            "1vBQErMm1EY6M1Ur2C8XfrGapB6nUq1LO",
+		Size:          104857600,
 		IsRegularFile: true,
-		Mode: 0644,
+		Mode:          0644,
 	}
 
 	err = db.SetAttributes("a", attributes)
@@ -130,16 +130,16 @@ func TestListSubDirectory(t *testing.T) {
 	}
 
 	attributes := Attributes{
-		Id: "1kgcI9l0qzeB8LtmUd0RxTO_hjQYbdjoo",
-		Size: 104857600,
+		Id:            "1kgcI9l0qzeB8LtmUd0RxTO_hjQYbdjoo",
+		Size:          104857600,
 		IsRegularFile: true,
-		Mode: 0644,
+		Mode:          0644,
 	}
 	attributes2 := Attributes{
-		Id: "1vBQErMm1EY6M1Ur2C8XfrGapB6nUq1LO",
-		Size: 104857600,
+		Id:            "1vBQErMm1EY6M1Ur2C8XfrGapB6nUq1LO",
+		Size:          104857600,
 		IsRegularFile: true,
-		Mode: 0644,
+		Mode:          0644,
 	}
 
 	err = db.SetAttributes("a", attributes)
@@ -198,10 +198,10 @@ func TestSetSize(t *testing.T) {
 	}
 
 	attributes := Attributes{
-		Id: "1kgcI9l0qzeB8LtmUd0RxTO_hjQYbdjoo",
-		Size: 104857600,
+		Id:            "1kgcI9l0qzeB8LtmUd0RxTO_hjQYbdjoo",
+		Size:          104857600,
 		IsRegularFile: true,
-		Mode: 0644,
+		Mode:          0644,
 	}
 
 	err = db.SetAttributes("a", attributes)
