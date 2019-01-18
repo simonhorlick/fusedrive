@@ -3,18 +3,18 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"golang.org/x/net/context"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+	"google.golang.org/api/drive/v3"
 	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"path"
-	"time"
 
-	"golang.org/x/net/context"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
-	"google.golang.org/api/drive/v3"
+	"github.com/cenkalti/backoff"
 )
 
 const (
@@ -127,44 +127,72 @@ func saveToken(path string, token *oauth2.Token) {
 // Create uploads a new file to the remote and returns the id of the created
 // file.
 func (d *DriveApi) Create(reader io.Reader) (string, error) {
-	// TODO(simon): Add retries and exponential backoff.
+	// TODO(simon): Log progress of uploads.
+	var response *drive.File
+	call := func() error {
+		request := d.Service.Files.Create(&drive.File{
+			MimeType: binaryMimeType,
+		}).Media(reader)
 
-	request := d.Service.Files.Create(&drive.File{
-		MimeType: binaryMimeType,
-	}).Media(reader)
+		log.Printf("Calling Files.Create")
+		response, err := request.Do()
 
-	log.Printf("Creating file")
-	start := time.Now()
-	file, err := request.Do()
+		// Determine whether the request will eventually succeed if we keep
+		// retrying.
+		if IsPermanentError(response.HTTPStatusCode) {
+			log.Printf("Files.Create request cannot be retried: %v", err)
+			return backoff.Permanent(err)
+		}
+
+		if err != nil {
+			log.Printf("Files.Create response error for: %v", err)
+			return err
+		}
+
+		// Success.
+		return nil
+	}
+
+	// Keep attempting the call until it succeeds, or we fail with a permanent
+	// error.
+	err := backoff.Retry(call, backoff.NewExponentialBackOff())
 	if err != nil {
-		log.Printf("Error creating file, err: %#v, %v", file, err)
 		return "", err
 	}
-	log.Printf("Uploaded file %s in %.03f seconds", file.Id,
-		time.Since(start).Seconds())
 
-	return file.Id, nil
+	return response.Id, nil
 }
 
 // Update replaces the contents of the given file with the data from reader.
 func (d *DriveApi) Update(id string, reader io.Reader) error {
-	// TODO(simon): Add retries and exponential backoff.
+	// TODO(simon): Log progress of uploads.
+	call := func() error {
+		request := d.Service.Files.Update(id, &drive.File{
+			MimeType: binaryMimeType,
+		}).Media(reader)
 
-	request := d.Service.Files.Update(id, &drive.File{
-		MimeType: binaryMimeType,
-	}).Media(reader)
+		log.Printf("Calling Files.Update for %s", id)
+		response, err := request.Do()
 
-	log.Printf("Uploading file %s", id)
-	start := time.Now()
-	file, err := request.Do()
-	if err != nil {
-		log.Printf("Error uploading file, err: %#v, %v", file, err)
-		return err
+		// Determine whether the request will eventually succeed if we keep
+		// retrying.
+		if IsPermanentError(response.HTTPStatusCode) {
+			log.Printf("Files.Update request for %s cannot be retried", id)
+			return backoff.Permanent(err)
+		}
+
+		if err != nil {
+			log.Printf("Files.Update response error for %s: %v", id, err)
+			return err
+		}
+
+		// Success.
+		return nil
 	}
-	log.Printf("Uploaded file %s in %.03f seconds", id,
-		time.Since(start).Seconds())
 
-	return nil
+	// Keep attempting the call until it succeeds, or we fail with a permanent
+	// error.
+	return backoff.Retry(call, backoff.NewExponentialBackOff())
 }
 
 // ReadAt returns the content of the file in the given range with the given
@@ -181,15 +209,75 @@ func (d *DriveApi) ReadAt(id string, size uint64, off uint64) (io.ReadCloser,
 	startRange := off
 	endRange := startRange + size - 1
 
-	request := d.Service.Files.Get(id)
-	request.Header().Add("Range",
-		fmt.Sprintf("bytes=%d-%d", startRange, endRange))
+	var response *http.Response
+	call := func() error {
+		request := d.Service.Files.Get(id)
+		request.Header().Add("Range",
+			fmt.Sprintf("bytes=%d-%d", startRange, endRange))
 
-	response, err := request.Download()
+		log.Printf("Calling Files.Get for %s", id)
+		response, err := request.Download()
+
+		log.Printf("Files.Get returned %s for %s", response.Status, id)
+
+		// Determine whether the request will eventually succeed if we keep
+		// retrying.
+		if IsPermanentError(response.StatusCode) {
+			log.Printf("Files.Get request for %s cannot be retried", id)
+			return backoff.Permanent(err)
+		}
+
+		if err != nil {
+			log.Printf("Files.Get response error for %s: %v", id, err)
+			return err
+		}
+
+		// Success.
+		return nil
+	}
+
+	// Keep attempting the call until it succeeds, or we fail with a permanent
+	// error.
+	err := backoff.Retry(call, backoff.NewExponentialBackOff())
 	if err != nil {
-		log.Printf("Response error %v", err)
 		return nil, err
 	}
 
 	return response.Body, nil
+}
+
+// IsPermanentError returns true if the request should not be retried.
+func IsPermanentError(status int) bool {
+	switch status {
+	// This can mean that a required field or parameter has not been
+	// provided, the value supplied is invalid, or the combination of
+	// provided fields is invalid.
+	case http.StatusBadRequest:
+		return true
+
+	// TODO(simon): Attempt to refresh the access token.
+	case http.StatusUnauthorized:
+		return true
+
+	// This is likely a rate limit. Retry with backoff.
+	case http.StatusForbidden:
+		return false
+
+	// The user does not have read access to a file, or the file does not
+	// exist.
+	case http.StatusNotFound:
+		return true
+
+	case http.StatusTooManyRequests:
+		return false
+
+	// Catch-all error, retry with backoff.
+	case http.StatusInternalServerError:
+		return false
+
+	// For unknown responses, do not retry.
+	default:
+		log.Printf("Unknown http response status: %v", status)
+		return true
+	}
 }
