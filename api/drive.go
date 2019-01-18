@@ -124,6 +124,11 @@ func saveToken(path string, token *oauth2.Token) {
 	json.NewEncoder(f).Encode(token)
 }
 
+// isHttpSuccess returns true if this status code signals success.
+func isHttpSuccess(code int) bool {
+	return code >= 200 && code < 300
+}
+
 // Create uploads a new file to the remote and returns the id of the created
 // file.
 func (d *DriveApi) Create(reader io.Reader) (string, error) {
@@ -135,18 +140,24 @@ func (d *DriveApi) Create(reader io.Reader) (string, error) {
 		}).Media(reader)
 
 		log.Printf("Calling Files.Create")
-		response, err := request.Do()
+		var err error
+		response, err = request.Do()
 
-		// Determine whether the request will eventually succeed if we keep
-		// retrying.
-		if IsPermanentError(response.HTTPStatusCode) {
-			log.Printf("Files.Create request cannot be retried: %v", err)
-			return backoff.Permanent(err)
-		}
+		log.Printf("Files.Create returned %#v", response)
 
+		// Either response is nil, or error is nil.
 		if err != nil {
 			log.Printf("Files.Create response error for: %v", err)
 			return err
+		} else if !isHttpSuccess(response.HTTPStatusCode) {
+			// Determine whether the request will eventually succeed if we keep
+			// retrying.
+			if IsPermanentError(response.HTTPStatusCode) {
+				log.Printf("Files.Create request cannot be retried: %v", err)
+				return backoff.Permanent(err)
+			} else {
+				return err
+			}
 		}
 
 		// Success.
@@ -174,16 +185,21 @@ func (d *DriveApi) Update(id string, reader io.Reader) error {
 		log.Printf("Calling Files.Update for %s", id)
 		response, err := request.Do()
 
-		// Determine whether the request will eventually succeed if we keep
-		// retrying.
-		if IsPermanentError(response.HTTPStatusCode) {
-			log.Printf("Files.Update request for %s cannot be retried", id)
-			return backoff.Permanent(err)
-		}
+		log.Printf("Files.Update returned %#v for %s", response, id)
 
 		if err != nil {
 			log.Printf("Files.Update response error for %s: %v", id, err)
 			return err
+		} else if !isHttpSuccess(response.HTTPStatusCode) {
+			// Determine whether the request will eventually succeed if we keep
+			// retrying.
+			if IsPermanentError(response.HTTPStatusCode) {
+				log.Printf("Files.Update for %s request cannot be retried: %v",
+					id, err)
+				return backoff.Permanent(err)
+			} else {
+				return err
+			}
 		}
 
 		// Success.
@@ -216,20 +232,24 @@ func (d *DriveApi) ReadAt(id string, size uint64, off uint64) (io.ReadCloser,
 			fmt.Sprintf("bytes=%d-%d", startRange, endRange))
 
 		log.Printf("Calling Files.Get for %s", id)
-		response, err := request.Download()
+		var err error
+		response, err = request.Download()
 
-		log.Printf("Files.Get returned %s for %s", response.Status, id)
-
-		// Determine whether the request will eventually succeed if we keep
-		// retrying.
-		if IsPermanentError(response.StatusCode) {
-			log.Printf("Files.Get request for %s cannot be retried", id)
-			return backoff.Permanent(err)
-		}
+		log.Printf("Files.Get returned %#v for %s", response, id)
 
 		if err != nil {
 			log.Printf("Files.Get response error for %s: %v", id, err)
 			return err
+		} else if !isHttpSuccess(response.StatusCode) {
+			// Determine whether the request will eventually succeed if we keep
+			// retrying.
+			if IsPermanentError(response.StatusCode) {
+				log.Printf("Files.Get request for %s cannot be retried: %v", id,
+					err)
+				return backoff.Permanent(err)
+			} else {
+				return err
+			}
 		}
 
 		// Success.
@@ -244,6 +264,50 @@ func (d *DriveApi) ReadAt(id string, size uint64, off uint64) (io.ReadCloser,
 	}
 
 	return response.Body, nil
+}
+
+func (d *DriveApi) ReadAll(id string, file *os.File) error {
+	call := func() error {
+		log.Printf("Calling Files.Get for %s", id)
+		response, err := d.Service.Files.Get(id).Download()
+
+		log.Printf("Files.Get returned %s for %s", response.Status, id)
+
+		if err != nil {
+			log.Printf("Files.Get response error for %s: %v", id, err)
+			return err
+		} else if !isHttpSuccess(response.StatusCode) {
+			// Determine whether the request will eventually succeed if we keep
+			// retrying.
+			if IsPermanentError(response.StatusCode) {
+				log.Printf("Files.Get request for %s cannot be retried: %v", id,
+					err)
+				return backoff.Permanent(err)
+			} else {
+				return err
+			}
+		}
+
+		n, err := io.Copy(file, response.Body)
+		if err != nil {
+			log.Printf("Files.Get error reading response for %s: %v", id, err)
+			return err
+		}
+		log.Printf("Files.Get returned %d bytes for %s", n, id)
+
+		// Success.
+		return nil
+	}
+
+	// Keep attempting the call until it succeeds, or we fail with a permanent
+	// error.
+	err := backoff.Retry(call, backoff.NewExponentialBackOff())
+	if err != nil {
+		return err
+	}
+
+	return nil
+
 }
 
 // IsPermanentError returns true if the request should not be retried.
