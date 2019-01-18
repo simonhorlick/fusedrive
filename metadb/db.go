@@ -398,6 +398,14 @@ func (d *DB) PutFile(path string, data []byte) error {
 	})
 }
 
+func (d *DB) RemoveFile(path string) error {
+	log.Printf("RemoveFile %s", path)
+	return d.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(contentBucket)
+		return b.Delete(serialisePath(path))
+	})
+}
+
 func (d *DB) SetMode(path string, mode uint32) error {
 	log.Printf("SetMode %s: %d", path, mode)
 	return d.Update(func(tx *bolt.Tx) error {

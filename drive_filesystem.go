@@ -289,17 +289,23 @@ func (fs *DriveFileSystem) Unlink(name string, context *fuse.Context) (
 	attributes, err := fs.db.GetAndDeleteAttributes(name)
 	if err == metadb.DoesNotExist {
 		return fuse.ENOENT
-	}
-
-	if err != nil {
-		log.Printf("failed to delete metadata for file %s: %v", name, err)
+	} else if err != nil {
+		log.Printf("Failed to delete metadata for file %s: %v", name, err)
 		return fuse.EIO
 	}
 
-	err = fs.driveApi.Service.Files.Delete(attributes.Id).Do()
-	if err != nil {
-		log.Printf("failed to delete file %s on remote: %v", name, err)
-		return fuse.EIO
+	if attributes.HasContent {
+		err := fs.db.RemoveFile(name)
+		if err != nil {
+			return fuse.EIO
+		}
+	} else {
+		err := fs.driveApi.Delete(attributes.Id)
+		if err != nil {
+			log.Printf("Failed to delete file %s (%s): %v", name, attributes.Id,
+				err)
+			return fuse.EIO
+		}
 	}
 
 	return fuse.OK

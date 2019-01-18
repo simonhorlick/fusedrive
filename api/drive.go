@@ -7,6 +7,7 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/drive/v3"
+	"google.golang.org/api/googleapi"
 	"io"
 	"io/ioutil"
 	"log"
@@ -294,6 +295,36 @@ func (d *DriveApi) ReadAll(id string, file *os.File) error {
 			return err
 		}
 		log.Printf("Files.Get returned %d bytes for %s", n, id)
+
+		// Success.
+		return nil
+	}
+
+	// Keep attempting the call until it succeeds, or we fail with a permanent
+	// error.
+	err := backoff.Retry(call, backoff.NewExponentialBackOff())
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (d *DriveApi) Delete(id string) error {
+	call := func() error {
+		log.Printf("Calling Files.Delete for %s", id)
+		err := d.Service.Files.Delete(id).Do()
+
+		if err != nil {
+			if serr, ok := err.(*googleapi.Error); ok {
+				if IsPermanentError(serr.Code) {
+					return backoff.Permanent(err)
+				}
+			}
+
+			log.Printf("Files.Delete response error for %s: %v", id, err)
+			return err
+		}
 
 		// Success.
 		return nil
