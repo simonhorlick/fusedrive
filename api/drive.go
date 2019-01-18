@@ -144,20 +144,22 @@ func (d *DriveApi) Create(reader io.Reader) (string, error) {
 		var err error
 		response, err = request.Do()
 
-		log.Printf("Files.Create returned %#v", response)
-
 		// Either response is nil, or error is nil.
 		if err != nil {
 			log.Printf("Files.Create response error for: %v", err)
 			return err
-		} else if !isHttpSuccess(response.HTTPStatusCode) {
-			// Determine whether the request will eventually succeed if we keep
-			// retrying.
-			if IsPermanentError(response.HTTPStatusCode) {
-				log.Printf("Files.Create request cannot be retried: %v", err)
-				return backoff.Permanent(err)
-			} else {
-				return err
+		} else {
+			log.Printf("Files.Create returned %d", response.HTTPStatusCode)
+
+			if !isHttpSuccess(response.HTTPStatusCode) {
+				// Determine whether the request will eventually succeed if we keep
+				// retrying.
+				if IsPermanentError(response.HTTPStatusCode) {
+					log.Printf("Files.Create request cannot be retried: %v", err)
+					return backoff.Permanent(err)
+				} else {
+					return err
+				}
 			}
 		}
 
@@ -191,15 +193,19 @@ func (d *DriveApi) Update(id string, reader io.Reader) error {
 		if err != nil {
 			log.Printf("Files.Update response error for %s: %v", id, err)
 			return err
-		} else if !isHttpSuccess(response.HTTPStatusCode) {
-			// Determine whether the request will eventually succeed if we keep
-			// retrying.
-			if IsPermanentError(response.HTTPStatusCode) {
-				log.Printf("Files.Update for %s request cannot be retried: %v",
-					id, err)
-				return backoff.Permanent(err)
-			} else {
-				return err
+		} else {
+			log.Printf("Files.Update returned %d", response.HTTPStatusCode)
+
+			if !isHttpSuccess(response.HTTPStatusCode) {
+				// Determine whether the request will eventually succeed if we keep
+				// retrying.
+				if IsPermanentError(response.HTTPStatusCode) {
+					log.Printf("Files.Update for %s request cannot be retried: %v",
+						id, err)
+					return backoff.Permanent(err)
+				} else {
+					return err
+				}
 			}
 		}
 
@@ -236,20 +242,22 @@ func (d *DriveApi) ReadAt(id string, size uint64, off uint64) (io.ReadCloser,
 		var err error
 		response, err = request.Download()
 
-		log.Printf("Files.Get returned %#v for %s", response, id)
-
 		if err != nil {
 			log.Printf("Files.Get response error for %s: %v", id, err)
 			return err
-		} else if !isHttpSuccess(response.StatusCode) {
-			// Determine whether the request will eventually succeed if we keep
-			// retrying.
-			if IsPermanentError(response.StatusCode) {
-				log.Printf("Files.Get request for %s cannot be retried: %v", id,
-					err)
-				return backoff.Permanent(err)
-			} else {
-				return err
+		} else {
+			log.Printf("Files.Get for %s returned %d", id, response.StatusCode)
+
+			if !isHttpSuccess(response.StatusCode) {
+				// Determine whether the request will eventually succeed if we keep
+				// retrying.
+				if IsPermanentError(response.StatusCode) {
+					log.Printf("Files.Get request for %s cannot be retried: %v", id,
+						err)
+					return backoff.Permanent(err)
+				} else {
+					return err
+				}
 			}
 		}
 
@@ -277,15 +285,19 @@ func (d *DriveApi) ReadAll(id string, file *os.File) error {
 		if err != nil {
 			log.Printf("Files.Get response error for %s: %v", id, err)
 			return err
-		} else if !isHttpSuccess(response.StatusCode) {
-			// Determine whether the request will eventually succeed if we keep
-			// retrying.
-			if IsPermanentError(response.StatusCode) {
-				log.Printf("Files.Get request for %s cannot be retried: %v", id,
-					err)
-				return backoff.Permanent(err)
-			} else {
-				return err
+		} else {
+			log.Printf("Files.Get for %s returned %d", id, response.StatusCode)
+
+			if !isHttpSuccess(response.StatusCode) {
+				// Determine whether the request will eventually succeed if we keep
+				// retrying.
+				if IsPermanentError(response.StatusCode) {
+					log.Printf("Files.Get request for %s cannot be retried: %v", id,
+						err)
+					return backoff.Permanent(err)
+				} else {
+					return err
+				}
 			}
 		}
 

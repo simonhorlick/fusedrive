@@ -36,6 +36,11 @@ func (f *FileReference) String() string {
 
 func (f *FileReference) Read(buf []byte, off int64) (res fuse.ReadResult, code fuse.Status) {
 	log.Printf("Read for %s at offset %d bufsize %d", f.name, off, len(buf))
+	err := f.cache.EnsureLocal(f)
+	if err != nil {
+		return nil, fuse.EIO
+	}
+
 	r := fuse.ReadResultFd(f.file.Fd(), off, len(buf))
 	return r, fuse.OK
 }
@@ -45,6 +50,11 @@ func (f *FileReference) Write(data []byte, off int64) (uint32, fuse.Status) {
 
 	if f.isReader {
 		return 0, fuse.EPERM
+	}
+
+	err := f.cache.EnsureLocal(f)
+	if err != nil {
+		return 0, fuse.EIO
 	}
 
 	f.cache.MarkDirty(f)
@@ -75,6 +85,12 @@ func (f *FileReference) Fsync(flags int) (code fuse.Status) {
 
 func (f *FileReference) Truncate(size uint64) fuse.Status {
 	log.Printf("Truncate for %s", f.name)
+
+	err := f.cache.EnsureLocal(f)
+	if err != nil {
+		return fuse.EIO
+	}
+
 	r := fuse.ToStatus(syscall.Ftruncate(int(f.file.Fd()), int64(size)))
 	return r
 }

@@ -300,6 +300,11 @@ func (fs *DriveFileSystem) Unlink(name string, context *fuse.Context) (
 			return fuse.EIO
 		}
 	} else {
+		// Only allow deleting files that aren't in use.
+		if fs.localFileCache.IsOpen(name) {
+			return fuse.EBUSY
+		}
+
 		err := fs.driveApi.Delete(attributes.Id)
 		if err != nil {
 			log.Printf("Failed to delete file %s (%s): %v", name, attributes.Id,

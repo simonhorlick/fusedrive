@@ -16,10 +16,11 @@ func (f *FileReference) Release() {
 }
 
 type refcountedFile struct {
-	file *os.File
-	id string
-	count int
-	dirty bool
+	file    *os.File
+	id      string
+	count   int
+	dirty   bool
+	fetched bool
 }
 
 // LocalFileCache copies files locally and re-uploads them when all clients have
@@ -94,20 +95,14 @@ func (c *LocalFileCache) Open(name, id string, isReader bool) *FileReference {
 			return nil
 		}
 
-		if id != EmptyId {
-			log.Printf("Reading entire file %s (%s) from remote", name, id)
-			err := c.api.ReadAll(id, f)
-			if err != nil {
-				log.Printf("Error reading file: %v", err)
-				return nil
-			}
-		}
-
+		// Fetch the file lazily. Some application will Open a file and never
+		// issue reads or writes.
 		info = &refcountedFile{
 			file: f,
 			count: 1,
 			dirty: false,
 			id: id,
+			fetched: false,
 		}
 		c.files[name] = info
 	} else {
@@ -122,6 +117,15 @@ func (c *LocalFileCache) Open(name, id string, isReader bool) *FileReference {
 		file: info.file,
 		isReader: isReader,
 	}
+}
+
+func (c *LocalFileCache) IsOpen(name string) bool {
+	c.filesMu.Lock()
+	defer c.filesMu.Unlock()
+
+	_, isOpen := c.files[name]
+
+	return isOpen
 }
 
 func (c *LocalFileCache) Release(file *FileReference) {
@@ -140,6 +144,8 @@ func (c *LocalFileCache) Release(file *FileReference) {
 	if !ok {
 		panic("Expected file to have a reference count!")
 	}
+
+	refs.count--
 
 	if refs.count == 0 {
 		log.Printf("Reference count for %s is zero, will remove local file",
@@ -199,4 +205,31 @@ func (c *LocalFileCache) Release(file *FileReference) {
 			log.Printf("failed to remove local file: %v", err)
 		}
 	}
+}
+
+func (c *LocalFileCache) EnsureLocal(file *FileReference) error {
+	c.locks.Lock(file.name)
+	defer c.locks.Unlock(file.name)
+
+	c.filesMu.Lock()
+	defer c.filesMu.Unlock()
+
+	refs, ok := c.files[file.name]
+	if !ok {
+		panic(fmt.Sprintf("expected files entry for %s", file.name))
+	}
+
+	if !refs.fetched {
+		if refs.id != EmptyId {
+			log.Printf("Reading entire file %s (%s) from remote", file.name, refs.id)
+			err := c.api.ReadAll(refs.id, file.file)
+			if err != nil {
+				log.Printf("Error reading file: %v", err)
+				return err
+			}
+		}
+		refs.fetched = true
+	}
+
+	return nil
 }
