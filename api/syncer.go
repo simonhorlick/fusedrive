@@ -8,12 +8,6 @@ import (
 	"os"
 )
 
-// Remote represents a remote filesystem.
-type Remote interface {
-	// Upload the contents of the given reader to the remote.
-	Upload(id string, reader io.Reader) error
-}
-
 // Syncer implements an upload queue for writing files to Google Drive.
 type Syncer struct {
 	// db stores the current upload queue

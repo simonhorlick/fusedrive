@@ -22,6 +22,9 @@ const (
 	// file.
 	credentialsFileName = "credentials.json"
 
+	// tokenFileName is where we expect to find a refresh token file.
+	tokenFileName = "token.json"
+
 	// binaryMimeType is the value of the MimeType attribute that is set on
 	// files uploaded to Google Drive.
 	binaryMimeType = "application/octet-stream"
@@ -55,28 +58,27 @@ func NewDriveApi(dataPath string) *DriveApi {
 	if err != nil {
 		log.Fatalf("Unable to parse client secret file to config: %v", err)
 	}
-	client := getClient(config)
+	client := getClient(config, dataPath)
 
 	srv, err := drive.New(client)
 	if err != nil {
 		log.Fatalf("Unable to retrieve Drive client: %v", err)
 	}
 
-	log.Print("Got DriveApi")
-
 	return &DriveApi{Service: srv}
 }
 
 // Retrieve a token, saves the token, then returns the generated client.
-func getClient(config *oauth2.Config) *http.Client {
+func getClient(config *oauth2.Config, dataPath string) *http.Client {
 	// The file token.json stores the user's access and refresh tokens, and is
 	// created automatically when the authorization flow completes for the first
 	// time.
-	tokFile := "token.json"
-	tok, err := tokenFromFile(tokFile)
+	tokenFile := path.Join(dataPath, tokenFileName)
+
+	tok, err := tokenFromFile(tokenFile)
 	if err != nil {
 		tok = getTokenFromWeb(config)
-		saveToken(tokFile, tok)
+		saveToken(tokenFile, tok)
 	}
 	return config.Client(context.Background(), tok)
 }
@@ -122,13 +124,35 @@ func saveToken(path string, token *oauth2.Token) {
 	json.NewEncoder(f).Encode(token)
 }
 
-// Upload replaces the contents of the file referenced by id with the data from
-// reader.
-func (d *DriveApi) Upload(id string, reader io.Reader) error {
+// Create uploads a new file to the remote and returns the id of the created
+// file.
+func (d *DriveApi) Create(reader io.Reader) (string, error) {
+	// TODO(simon): Add retries and exponential backoff.
+
+	request := d.Service.Files.Create(&drive.File{
+		MimeType: binaryMimeType,
+	}).Media(reader)
+
+	log.Printf("Creating file")
+	start := time.Now()
+	file, err := request.Do()
+	if err != nil {
+		log.Printf("Error creating file, err: %#v, %v", file, err)
+		return "", err
+	}
+	log.Printf("Uploaded file %s in %.03f seconds", file.Id,
+		time.Since(start).Seconds())
+
+	return file.Id, nil
+}
+
+// Update replaces the contents of the given file with the data from reader.
+func (d *DriveApi) Update(id string, reader io.Reader) error {
+	// TODO(simon): Add retries and exponential backoff.
+
 	request := d.Service.Files.Update(id, &drive.File{
 		MimeType: binaryMimeType,
-	})
-	request.Media(reader)
+	}).Media(reader)
 
 	log.Printf("Uploading file %s", id)
 	start := time.Now()
@@ -141,4 +165,31 @@ func (d *DriveApi) Upload(id string, reader io.Reader) error {
 		time.Since(start).Seconds())
 
 	return nil
+}
+
+// ReadAt returns the content of the file in the given range with the given
+// id.
+func (d *DriveApi) ReadAt(id string, size uint64, off uint64) (io.ReadCloser,
+       error) {
+	if size == 0 {
+		log.Printf("error: Attempted zero byte read")
+		return nil, nil
+	}
+
+	// The byte range specified in the Range header is [start,end] inclusive. So
+	// [0,1023] would return 1024 bytes.
+	startRange := off
+	endRange := startRange + size - 1
+
+	request := d.Service.Files.Get(id)
+	request.Header().Add("Range",
+		fmt.Sprintf("bytes=%d-%d", startRange, endRange))
+
+	response, err := request.Download()
+	if err != nil {
+		log.Printf("Response error %v", err)
+		return nil, err
+	}
+
+	return response.Body, nil
 }
