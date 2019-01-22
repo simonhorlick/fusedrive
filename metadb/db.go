@@ -25,6 +25,9 @@ var (
 	// contentBucket stores the file content for selected files
 	contentBucket = []byte("content-bucket")
 
+	// keysBucket stores data related to encryption
+	keysBucket = []byte("keys-bucket")
+
 	DoesNotExist = errors.New("does not exist")
 
 	AlreadyExists = errors.New("already exists")
@@ -67,11 +70,12 @@ func serialiseAttributes(attributes Attributes) ([]byte, error) {
 
 // writeAttributes ...
 func writeAttributes(w io.Writer, attributes Attributes) error {
-	if len(attributes.Id) != 33 {
-		panic("Google Drive ID is not 33 bytes")
+	id := []byte(attributes.Id)
+	// Write length of id.
+	if err := binary.Write(w, binary.LittleEndian, uint32(len(id))); err != nil {
+		return err
 	}
-
-	if _, err := w.Write([]byte(attributes.Id)); err != nil {
+	if _, err := w.Write(id); err != nil {
 		return err
 	}
 	if err := binary.Write(w, binary.LittleEndian, attributes.Size); err != nil {
@@ -94,7 +98,13 @@ func writeAttributes(w io.Writer, attributes Attributes) error {
 func readAttributes(r io.Reader) (Attributes, error) {
 	var attributes Attributes
 
-	id := make([]byte, 33)
+	// Read length of id.
+	var idlen uint32
+	if err := binary.Read(r, binary.LittleEndian, &idlen); err != nil {
+		return attributes, err
+	}
+
+	id := make([]byte, idlen)
 	if _, err := io.ReadFull(r, id); err != nil {
 		return attributes, err
 	}
@@ -154,6 +164,10 @@ func createDB(dbPath string) error {
 		}
 
 		if _, err := tx.CreateBucket(contentBucket); err != nil {
+			return err
+		}
+
+		if _, err := tx.CreateBucket(keysBucket); err != nil {
 			return err
 		}
 
@@ -466,5 +480,27 @@ func (d *DB) SetId(path, id string) error {
 			return err
 		}
 		return b.Put(k, newAttributes)
+	})
+}
+
+func (d *DB) GetSalt() ([]byte, error) {
+	var res []byte
+	err := d.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(keysBucket)
+		v := b.Get([]byte("salt"))
+		if v == nil {
+			return nil
+		}
+		res = make([]byte, 32)
+		copy(res, v)
+		return nil
+	})
+	return res, err
+}
+
+func (d *DB) PutSalt(salt []byte) error {
+	return d.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(keysBucket)
+		return b.Put([]byte("salt"), salt)
 	})
 }
