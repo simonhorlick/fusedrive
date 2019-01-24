@@ -504,3 +504,24 @@ func (d *DB) PutSalt(salt []byte) error {
 		return b.Put([]byte("salt"), salt)
 	})
 }
+
+func (d *DB) FilesystemStats() (files uint64, usedBytes uint64, err error) {
+	// Scan the entire database working out the space usage.
+	err = d.View(func(tx *bolt.Tx) error {
+		c := tx.Bucket(pathsBucket).Cursor()
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			attributes, err := readAttributes(bytes.NewReader(v))
+			if err != nil {
+				return err
+			}
+
+			if attributes.IsRegularFile {
+				files++
+				usedBytes += attributes.Size
+			}
+		}
+		return nil
+	})
+
+	return files, usedBytes, err
+}
