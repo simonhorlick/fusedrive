@@ -412,6 +412,7 @@ func (d *DB) PutFile(path string, data []byte) error {
 	})
 }
 
+// RemoveFile removes the file content associated with the given path.
 func (d *DB) RemoveFile(path string) error {
 	log.Printf("RemoveFile %s", path)
 	return d.Update(func(tx *bolt.Tx) error {
@@ -554,7 +555,7 @@ func (d *DB) RemoveBadFiles() error {
 
 	for _, file := range badFiles {
 		log.Printf("File %s is invalid, will remove fs entry", file)
-		err := d.RemoveFile(file)
+		_, err := d.GetAndDeleteAttributes(file)
 		if err != nil {
 			return err
 		}
