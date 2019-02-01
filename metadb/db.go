@@ -525,3 +525,40 @@ func (d *DB) FilesystemStats() (files uint64, usedBytes uint64, err error) {
 
 	return files, usedBytes, err
 }
+
+var EmptyId = string(bytes.Repeat([]byte{0x00}, 33))
+
+// RemoveBadFiles goes through the database looking for files that have not been
+// created properly and removing them.
+func (d *DB) RemoveBadFiles() error {
+	var badFiles []string
+
+	// Scan the entire database looking for hanging files.
+	err := d.View(func(tx *bolt.Tx) error {
+		c := tx.Bucket(pathsBucket).Cursor()
+		for k, v := c.First(); k != nil; k, v = c.Next() {
+			attributes, err := readAttributes(bytes.NewReader(v))
+			if err != nil {
+				return err
+			}
+
+			if attributes.IsRegularFile && attributes.Id == EmptyId {
+				badFiles = append(badFiles, string(k))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, file := range badFiles {
+		log.Printf("File %s is invalid, will remove fs entry", file)
+		err := d.RemoveFile(file)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
